@@ -3889,3 +3889,767 @@ names ─────────► ArrayList
 - [Java Language Specification — Lambda Expressions](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27) — захват final/effectively final variables.
 
 **Далее:** 1.11. Generics — type parameters, invariance, wildcards, PECS, bounded types, type erasure и ограничения generics.
+
+---
+
+### 1.11. Generics: type safety, wildcards, PECS и type erasure
+
+**Generics** позволяют параметризовать классы, интерфейсы и методы типами.
+
+Главная практическая цель — получить **type safety на этапе компиляции** и не писать ручные casts там, где тип уже известен.
+
+Без generics:
+
+```java
+List values = new ArrayList();
+values.add("Java");
+
+String value = (String) values.get(0);
+```
+
+С generics:
+
+```java
+List<String> values = new ArrayList<>();
+values.add("Java");
+
+String value = values.get(0);
+```
+
+Компилятор знает, что список предназначен для `String`, и не позволит случайно добавить несовместимый объект.
+
+> Поиск по исходному конспекту не нашёл отдельного учебного блока по Java Generics. В исходнике встречаются generic-сигнатуры вроде `Map<Long, Order>`, generic API библиотек и коллекций, но не объясняются invariance, wildcards, PECS или type erasure. Поэтому этот подраздел добавлен как необходимая Java Core база по Java Language Specification.
+
+#### Generic class
+
+Простейший generic class:
+
+```java
+class Box<T> {
+
+    private T value;
+
+    void set(T value) {
+        this.value = value;
+    }
+
+    T get() {
+        return value;
+    }
+}
+```
+
+Использование:
+
+```java
+Box<String> box = new Box<>();
+box.set("Java");
+
+String value = box.get();
+```
+
+`T` — **type parameter**.
+
+После подстановки:
+
+```text
+Box<String>
+    T → String
+
+Box<Integer>
+    T → Integer
+```
+
+Распространённые соглашения имён:
+
+- `T` — Type;
+- `E` — Element;
+- `K` — Key;
+- `V` — Value;
+- `R` — Result/Return type.
+
+Это соглашения, а не специальные ключевые слова.
+
+#### Несколько type parameters
+
+```java
+class Pair<K, V> {
+
+    private final K key;
+    private final V value;
+
+    Pair(K key, V value) {
+        this.key = key;
+        this.value = value;
+    }
+
+    K key() {
+        return key;
+    }
+
+    V value() {
+        return value;
+    }
+}
+```
+
+```java
+Pair<Long, String> user =
+        new Pair<>(42L, "Alice");
+```
+
+Компилятор часто умеет вывести type arguments справа, поэтому используется diamond operator `<>`.
+
+#### Generic method
+
+Generic может быть не весь класс, а отдельный метод:
+
+```java
+static <T> T first(List<T> values) {
+    return values.get(0);
+}
+```
+
+`<T>` объявляется **перед return type**.
+
+Использование:
+
+```java
+String firstName = first(List.of("Alice", "Bob"));
+Integer firstNumber = first(List.of(10, 20));
+```
+
+Обычно type argument выводится компилятором автоматически.
+
+#### Bounded type parameter
+
+Иногда любой `T` слишком широк.
+
+Например:
+
+```java
+static <T extends Number> double doubleValue(T value) {
+    return value.doubleValue();
+}
+```
+
+Теперь допустимы:
+
+```java
+doubleValue(10);
+doubleValue(10L);
+doubleValue(2.5);
+```
+
+но не:
+
+```java
+// doubleValue("10"); // compile error
+```
+
+Здесь `extends` означает **upper bound**, а не только наследование класса в обычном смысле. Bound может быть и interface.
+
+Несколько bounds:
+
+```java
+static <T extends Number & Comparable<T>> T max(T a, T b) {
+    return a.compareTo(b) >= 0 ? a : b;
+}
+```
+
+Если есть class bound, он должен стоять первым, после него могут идти interface bounds.
+
+#### Generics invariant
+
+Очень важное правило:
+
+```text
+Integer extends Number
+
+НО
+
+List<Integer> НЕ extends List<Number>
+```
+
+То есть Java generics по умолчанию **invariant**.
+
+Почему это необходимо?
+
+Представим, что такое присваивание было бы разрешено:
+
+```java
+List<Integer> integers = new ArrayList<>();
+
+// воображаем, что это разрешено:
+List<Number> numbers = integers;
+
+numbers.add(3.14);
+```
+
+Тогда через `List<Number>` мы добавили бы `Double` в объект, который должен быть `List<Integer>`.
+
+Поэтому:
+
+```java
+List<Integer> integers = new ArrayList<>();
+
+// List<Number> numbers = integers; // compile error
+```
+
+#### Wildcard `?`
+
+Wildcard означает некоторый неизвестный тип:
+
+```java
+List<?> values;
+```
+
+Например:
+
+```java
+static void printAll(List<?> values) {
+    for (Object value : values) {
+        System.out.println(value);
+    }
+}
+```
+
+Методу можно передать:
+
+```java
+printAll(List.of("A", "B"));
+printAll(List.of(1, 2, 3));
+```
+
+Но `List<?>` — это **не** то же самое, что `List<Object>`.
+
+```java
+List<Object> objects = new ArrayList<>();
+objects.add("text");
+objects.add(10);
+```
+
+`List<Object>` означает: список именно типа `Object`, куда можно добавлять разные объекты.
+
+`List<?>` означает: список некоторого конкретного, но неизвестного нам типа.
+
+Поэтому:
+
+```java
+static void add(List<?> values) {
+    // values.add("text"); // compile error
+}
+```
+
+Безопасно добавить обычное ненулевое значение нельзя, потому что реальный список может оказаться `List<Integer>`, `List<User>` и т. д. (`null` — отдельный допустимый случай, но практической пользы здесь почти нет).
+
+#### Upper-bounded wildcard: `? extends T`
+
+```java
+List<? extends Number>
+```
+
+означает:
+
+> список некоторого неизвестного типа, который является `Number` или его subtype.
+
+Можно передать:
+
+```java
+List<Integer> integers = List.of(1, 2, 3);
+List<Double> doubles = List.of(1.5, 2.5);
+
+printNumbers(integers);
+printNumbers(doubles);
+```
+
+```java
+static void printNumbers(List<? extends Number> values) {
+    for (Number value : values) {
+        System.out.println(value.doubleValue());
+    }
+}
+```
+
+Читать как `Number` безопасно.
+
+Но добавлять конкретный subtype нельзя:
+
+```java
+static void broken(List<? extends Number> values) {
+    // values.add(10);   // compile error
+    // values.add(2.5);  // compile error
+}
+```
+
+Почему? Компилятор не знает, что реально скрывается за `?`:
+
+```text
+List<Integer> ?
+List<Double>  ?
+List<BigDecimal> ?
+```
+
+Добавление `Integer` было бы неправильным, если фактический тип — `Double`.
+
+#### Lower-bounded wildcard: `? super T`
+
+```java
+List<? super Integer>
+```
+
+означает список некоторого типа, являющегося `Integer` или его supertype.
+
+Например:
+
+```java
+static void addIntegers(List<? super Integer> values) {
+    values.add(10);
+    values.add(20);
+}
+```
+
+Можно передать:
+
+```java
+List<Integer> integers = new ArrayList<>();
+List<Number> numbers = new ArrayList<>();
+List<Object> objects = new ArrayList<>();
+
+addIntegers(integers);
+addIntegers(numbers);
+addIntegers(objects);
+```
+
+Добавлять `Integer` безопасно.
+
+Но при чтении конкретный тип неизвестен:
+
+```java
+Object value = values.get(0);
+```
+
+Гарантированно получить можно только `Object`, потому что фактический список может быть `List<Object>`.
+
+#### PECS: Producer Extends, Consumer Super
+
+Главное мнемоническое правило для wildcards:
+
+> **PECS — Producer Extends, Consumer Super.**
+
+Если структура **производит значения T**, используем:
+
+```java
+? extends T
+```
+
+Если структура **принимает/потребляет T**, используем:
+
+```java
+? super T
+```
+
+Классический пример копирования:
+
+```java
+static <T> void copy(
+        List<? extends T> source,
+        List<? super T> destination
+) {
+    for (T value : source) {
+        destination.add(value);
+    }
+}
+```
+
+```text
+source
+? extends T
+PRODUCER
+    │
+    │ read T
+    ▼
+    T
+    │
+    │ write T
+    ▼
+? super T
+CONSUMER
+destination
+```
+
+Пример:
+
+```java
+List<Integer> source = List.of(1, 2, 3);
+List<Number> destination = new ArrayList<>();
+
+copy(source, destination);
+```
+
+Важно: PECS — полезная эвристика для **API, где параметр используется в роли producer/consumer**, а не магическое правило «везде ставить wildcard».
+
+#### `List<T>` или `List<? extends T>`?
+
+Если метод должен работать именно с единым type parameter, который связан с другими аргументами/return type, часто нужен `T`.
+
+Например:
+
+```java
+static <T> T first(List<T> values) {
+    return values.get(0);
+}
+```
+
+Если метод просто читает значения как базовый тип:
+
+```java
+static double sum(List<? extends Number> values) {
+    double result = 0;
+
+    for (Number value : values) {
+        result += value.doubleValue();
+    }
+
+    return result;
+}
+```
+
+wildcard делает API гибче.
+
+#### Type erasure
+
+Java generics в основном реализованы через **type erasure**.
+
+Это означает, что generic type information используется компилятором для проверки типов, а после компиляции большая часть параметризации не представлена как отдельные runtime-классы.
+
+Например:
+
+```java
+List<String> strings = new ArrayList<>();
+List<Integer> integers = new ArrayList<>();
+
+System.out.println(
+        strings.getClass() == integers.getClass()
+); // true
+```
+
+Оба объекта runtime являются `ArrayList`.
+
+Упрощённо:
+
+```java
+class Box<T> {
+    T value;
+}
+```
+
+после erasure концептуально близок к:
+
+```java
+class Box {
+    Object value;
+}
+```
+
+Если есть bound:
+
+```java
+class Box<T extends Number> {
+    T value;
+}
+```
+
+erasure `T` основан на его leftmost bound — здесь `Number`.
+
+Это **упрощённая модель для понимания**, а не буквальный Java-source, который генерирует компилятор: компилятор также вставляет casts и при необходимости создаёт bridge methods для сохранения полиморфизма.
+
+#### Generic signatures всё же могут присутствовать в class file
+
+Фраза «generics полностью исчезают после компиляции» слишком грубая.
+
+Исходный конспект в разделе Metaspace прямо упоминает generic-signatures вроде `Map<Long, Order>` среди метаданных классов. fileciteturn44file0
+
+Class files могут содержать generic metadata в атрибутах вроде `Signature`, поэтому reflection способен получить часть объявленной generic-информации:
+
+```java
+Field field = MyClass.class.getDeclaredField("orders");
+Type type = field.getGenericType();
+```
+
+Но runtime object всё равно обычно не несёт различия вида:
+
+```text
+new ArrayList<String>()
+vs
+new ArrayList<Integer>()
+```
+
+как двух разных runtime classes.
+
+#### Почему нельзя `new T()`?
+
+```java
+class Factory<T> {
+
+    T create() {
+        // return new T(); // compile error
+    }
+}
+```
+
+Из-за erasure JVM не располагает в этом месте конкретным runtime class, который следует создать.
+
+Один из вариантов — передать фабрику:
+
+```java
+class Factory<T> {
+
+    private final Supplier<T> supplier;
+
+    Factory(Supplier<T> supplier) {
+        this.supplier = supplier;
+    }
+
+    T create() {
+        return supplier.get();
+    }
+}
+```
+
+```java
+Factory<User> factory = new Factory<>(User::new);
+```
+
+Или передать `Class<T>`, если задача действительно требует reflection.
+
+#### Почему нельзя создать generic array?
+
+Так нельзя:
+
+```java
+// T[] values = new T[10];
+```
+
+И:
+
+```java
+// List<String>[] lists = new List<String>[10];
+```
+
+Arrays в Java **reified**: runtime знает их component type и проверяет присваивания.
+
+Generics, напротив, подвергаются erasure.
+
+Смешивание этих моделей нарушило бы runtime type safety.
+
+Сравним:
+
+```java
+Number[] numbers = new Integer[2];
+
+numbers[0] = 1;
+// numbers[1] = 2.5; // ArrayStoreException
+```
+
+Массив runtime знает, что он реально `Integer[]`.
+
+Для `List<String>` такой runtime-проверки type argument нет.
+
+#### Почему нельзя `instanceof List<String>`?
+
+Так нельзя:
+
+```java
+// if (value instanceof List<String>) { }
+```
+
+После erasure JVM не может в общем случае проверить type argument `String`.
+
+Можно:
+
+```java
+if (value instanceof List<?>) {
+    // ...
+}
+```
+
+Runtime способен проверить сам тип `List`, но не параметризацию `String`.
+
+#### Primitive types в generics
+
+Так нельзя:
+
+```java
+// List<int>
+```
+
+Type arguments должны быть reference types:
+
+```java
+List<Integer> numbers;
+```
+
+Поэтому используются wrapper classes и autoboxing, рассмотренные ранее.
+
+Это может иметь performance cost в числовом коде из-за boxing/unboxing и представления объектов.
+
+#### Static field типа `T`
+
+У generic class нельзя сделать:
+
+```java
+class Box<T> {
+    // static T value; // compile error
+}
+```
+
+Static member принадлежит самому классу `Box`, а не отдельной параметризации:
+
+```text
+Box<String>
+Box<Integer>
+     │
+     └── один runtime class Box
+```
+
+Не существовало бы однозначного ответа, какого типа должно быть общее static field.
+
+#### Raw types
+
+Старый код до generics совместим через **raw types**:
+
+```java
+List values = new ArrayList();
+```
+
+Но raw type отключает часть compile-time type safety:
+
+```java
+List<String> strings = new ArrayList<>();
+
+List raw = strings;
+raw.add(123);
+
+String value = strings.get(0); // возможен ClassCastException
+```
+
+Компилятор обычно выдаёт unchecked warning.
+
+Raw types стоит избегать в новом коде, кроме случаев взаимодействия с legacy API, где это действительно необходимо.
+
+#### Heap pollution
+
+**Heap pollution** возникает, когда переменная параметризованного типа фактически ссылается на объект, нарушающий ожидаемую параметризацию.
+
+Raw types — один из способов получить такую проблему:
+
+```java
+List<String> strings = new ArrayList<>();
+List raw = strings;
+
+raw.add(42);
+```
+
+Ошибка может проявиться значительно позже при автоматически вставленном cast:
+
+```java
+String value = strings.get(0); // ClassCastException
+```
+
+Поэтому unchecked warnings нельзя автоматически считать безобидными.
+
+#### Wildcard capture
+
+Иногда компилятор описывает ошибку через термин вроде:
+
+```text
+capture of ?
+```
+
+Например:
+
+```java
+static void setFirst(List<?> list) {
+    // list.set(0, list.get(0)); // может потребовать helper
+}
+```
+
+`?` представляет неизвестный, но **конкретный** тип. Компилятор внутренне «захватывает» его как отдельный тип.
+
+Типичный приём — helper method:
+
+```java
+static void setFirst(List<?> list) {
+    setFirstHelper(list);
+}
+
+private static <T> void setFirstHelper(List<T> list) {
+    list.set(0, list.get(0));
+}
+```
+
+Это не самый частый вопрос junior/middle интервью, но помогает понимать сообщения компилятора при сложных wildcard API.
+
+#### Типичные ошибки
+
+**«Если Integer extends Number, то List<Integer> extends List<Number>».**  
+Нет. Generics invariant.
+
+**«List<?> — то же самое, что List<Object>».**  
+Нет. `List<Object>` имеет известный element type `Object`; у `List<?>` element type неизвестен.
+
+**«Из List<? extends Number> можно добавлять Integer».**  
+Нет. Фактический тип может быть `List<Double>`.
+
+**«Type erasure означает, что generic information вообще нигде нет после компиляции».**  
+Слишком грубо. Runtime instances не разделяются по type arguments, но class file может сохранять generic signatures для reflection.
+
+**«PECS означает, что extends всегда только читает, а super всегда только пишет».**  
+Это мнемоника для проектирования API. Технически читать из `? super T` можно как `Object`, а в `? extends T` можно, например, записать `null`.
+
+#### Что важно запомнить
+
+- Generics дают **compile-time type safety** и уменьшают количество ручных casts.
+- `T`, `E`, `K`, `V` — обычные соглашения имён type parameters.
+- Java generics **invariant**: `List<Integer>` не является subtype `List<Number>`.
+- `? extends T` удобно для producer, `? super T` — для consumer.
+- **PECS = Producer Extends, Consumer Super.**
+- `List<?>` и `List<Object>` имеют разную семантику.
+- Generics реализованы преимущественно через **type erasure**.
+- Из-за erasure нельзя напрямую `new T()`, `new T[]` или `instanceof List<String>`.
+- Type arguments не могут быть primitives: нужен `Integer`, а не `int`.
+- Raw types и unchecked operations могут привести к heap pollution и отложенному `ClassCastException`.
+
+#### На собеседовании
+
+**Почему `List<Integer>` нельзя присвоить `List<Number>`?**
+
+> Потому что Java generics invariant. Если бы такое присваивание разрешалось, через ссылку List<Number> можно было бы добавить Double в фактический List<Integer>, нарушив type safety.
+
+**Что такое PECS?**
+
+> Producer Extends, Consumer Super. Если параметризированная структура в основном отдаёт T, обычно используют ? extends T. Если она принимает T — ? super T. Например, источник копирования может быть List<? extends T>, а destination — List<? super T>.
+
+**Чем `List<?>` отличается от `List<Object>`?**
+
+> List<Object> — список с известным element type Object, поэтому в него можно добавлять Object-значения. List<?> — список некоторого неизвестного типа, поэтому безопасно читать элементы как Object, но добавлять конкретные ненулевые значения нельзя.
+
+**Что такое type erasure?**
+
+> Generic type parameters в основном используются компилятором для проверки типов, а runtime не создаёт отдельные классы для List<String> и List<Integer>. После erasure компилятор использует bounds/Object, вставляет необходимые casts и иногда bridge methods. При этом generic signatures могут сохраняться в class file как metadata и быть доступны через reflection.
+
+**Почему нельзя создать `new T()`?**
+
+> После type erasure в общем случае нет конкретного runtime class, который нужно создать. Обычно constructor/factory передают явно, например Supplier<T> или Class<T>.
+
+#### Источники и уточнения
+
+- Отдельного учебного блока по Generics в найденном исходном конспекте нет; исходник только использует generic types и упоминает generic signatures среди метаданных классов. fileciteturn44file0
+- Поэтому invariance, wildcards, PECS, erasure и ограничения generics в этом разделе являются дополнением по спецификации Java, а не пересказом исходника.
+- [Java Language Specification — Type Parameters](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.4) — type parameters и bounds.
+- [Java Language Specification — Parameterized Types](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.5) — parameterized types, wildcards и raw types.
+- [Java Language Specification — Type Erasure](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.6) — правила erasure.
+- [Java Tutorials — Guidelines for Wildcard Use](https://docs.oracle.com/javase/tutorial/java/generics/wildcardGuidelines.html) — практическое правило in/out variables и PECS-подход.
+
+**Далее:** 1.12. Enum и Record — enum как полноценный класс, поля/методы/конструкторы, `values()`/`valueOf()`, record components, generated members, shallow immutability и ограничения.
