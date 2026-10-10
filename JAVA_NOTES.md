@@ -4653,3 +4653,686 @@ private static <T> void setFirstHelper(List<T> list) {
 - [Java Tutorials — Guidelines for Wildcard Use](https://docs.oracle.com/javase/tutorial/java/generics/wildcardGuidelines.html) — практическое правило in/out variables и PECS-подход.
 
 **Далее:** 1.12. Enum и Record — enum как полноценный класс, поля/методы/конструкторы, `values()`/`valueOf()`, record components, generated members, shallow immutability и ограничения.
+
+---
+
+### 1.12. Enum и Record
+
+`enum` и `record` — специальные формы объявления классов в Java.
+
+Они решают разные задачи:
+
+```text
+enum   → фиксированный набор именованных экземпляров
+record → компактное представление data carrier / value-like данных
+```
+
+> В исходном конспекте enum встречается главным образом в JPA (`@Enumerated`, `LockModeType`), но отдельного Java Core-разбора enum нет. fileciteturn48file0 fileciteturn48file9 Отдельного материала по records поиском не найдено. Поэтому языковая семантика этого подраздела добавлена по Java Language Specification.
+
+#### Enum — не просто набор числовых констант
+
+Простой enum:
+
+```java
+enum OrderStatus {
+    NEW,
+    PAID,
+    CANCELLED
+}
+```
+
+Использование:
+
+```java
+OrderStatus status = OrderStatus.NEW;
+```
+
+Каждая enum constant — единственный экземпляр соответствующего enum type.
+
+Поэтому enum намного безопаснее набора строк:
+
+```java
+String status = "PAYD"; // опечатка компилируется
+```
+
+В enum:
+
+```java
+// OrderStatus.PAYD // compile error
+```
+
+Допустимые значения ограничены самим типом.
+
+#### Enum может иметь поля, constructor и методы
+
+```java
+enum HttpStatus {
+
+    OK(200),
+    NOT_FOUND(404),
+    INTERNAL_ERROR(500);
+
+    private final int code;
+
+    HttpStatus(int code) {
+        this.code = code;
+    }
+
+    public int getCode() {
+        return code;
+    }
+}
+```
+
+Использование:
+
+```java
+HttpStatus status = HttpStatus.NOT_FOUND;
+
+System.out.println(status.getCode()); // 404
+```
+
+Constructor enum нельзя вызывать самостоятельно:
+
+```java
+// new HttpStatus(200); // нельзя
+```
+
+Экземпляры создаются только из enum constants, перечисленных в declaration.
+
+#### Enum наследуется от `java.lang.Enum`
+
+Все enum classes имеют специальную связь с:
+
+```java
+java.lang.Enum<E>
+```
+
+Поэтому enum не может явно наследоваться от другого класса:
+
+```java
+// enum Status extends SomeClass { ... } // нельзя
+```
+
+Но enum может реализовывать interfaces:
+
+```java
+interface Describable {
+    String description();
+}
+
+enum Status implements Describable {
+
+    ACTIVE,
+    BLOCKED;
+
+    @Override
+    public String description() {
+        return name().toLowerCase();
+    }
+}
+```
+
+#### Каждая enum constant может иметь своё поведение
+
+```java
+enum Operation {
+
+    ADD {
+        @Override
+        int apply(int a, int b) {
+            return a + b;
+        }
+    },
+
+    MULTIPLY {
+        @Override
+        int apply(int a, int b) {
+            return a * b;
+        }
+    };
+
+    abstract int apply(int a, int b);
+}
+```
+
+```java
+int result = Operation.ADD.apply(2, 3); // 5
+```
+
+Это позволяет использовать полиморфизм вместо большого `switch`, если поведение естественно принадлежит самой enum constant.
+
+#### `values()`
+
+Компилятор предоставляет enum class метод:
+
+```java
+OrderStatus[] values = OrderStatus.values();
+```
+
+Он возвращает constants в порядке объявления:
+
+```java
+for (OrderStatus status : OrderStatus.values()) {
+    System.out.println(status);
+}
+```
+
+Важно: возвращаемый массив можно менять, но это не изменяет сам набор enum constants — вызов возвращает отдельный массив.
+
+#### `valueOf()`
+
+```java
+OrderStatus status =
+        OrderStatus.valueOf("PAID");
+```
+
+Вернёт:
+
+```text
+OrderStatus.PAID
+```
+
+Имя должно совпадать точно.
+
+```java
+OrderStatus.valueOf("paid");
+```
+
+приведёт к:
+
+```text
+IllegalArgumentException
+```
+
+А `null` приводит к `NullPointerException`.
+
+Поэтому данные из внешнего API нельзя бездумно передавать в `valueOf()`, если контракт не гарантирует допустимое значение.
+
+#### `name()`, `toString()` и `ordinal()`
+
+У enum constant есть:
+
+```java
+OrderStatus.PAID.name();    // "PAID"
+OrderStatus.PAID.ordinal(); // 1
+```
+
+`name()` — имя constant, объявленное в исходном коде.
+
+`ordinal()` — позиция, начиная с нуля:
+
+```text
+NEW       → 0
+PAID      → 1
+CANCELLED → 2
+```
+
+**Не стоит сохранять `ordinal()` как устойчивый бизнес-идентификатор.**
+
+Если изменить порядок:
+
+```java
+enum OrderStatus {
+    NEW,
+    CANCELLED,
+    PAID
+}
+```
+
+старое число `1` уже означает другое значение.
+
+Именно поэтому при сохранении enum в БД строковое представление обычно устойчивее ordinal к простой перестановке constants. В исходном конспекте эта тема появляется через JPA-аннотацию `@Enumerated`, которая позволяет выбирать `ORDINAL` или `STRING`. fileciteturn48file0 Подробности JPA mapping будут разобраны в главе Hibernate/JPA.
+
+#### Сравнение enum
+
+Enum constants удобно сравнивать через `==`:
+
+```java
+if (status == OrderStatus.PAID) {
+    // ...
+}
+```
+
+Для одной enum constant существует один канонический экземпляр, поэтому identity comparison здесь корректен.
+
+Дополнительный плюс:
+
+```java
+status == OrderStatus.PAID
+```
+
+безопасен даже если `status == null`: результат будет `false`.
+
+#### Enum в `switch`
+
+```java
+String message = switch (status) {
+    case NEW -> "Created";
+    case PAID -> "Paid";
+    case CANCELLED -> "Cancelled";
+};
+```
+
+Для закрытого набора enum constants компилятор может проверять exhaustiveness switch expression.
+
+Это делает enum удобным для конечных наборов состояний, режимов, типов операций и т. п.
+
+#### Когда enum подходит, а когда нет?
+
+Хорошие кандидаты:
+
+```text
+OrderStatus
+PaymentType
+DayOfWeek
+LogLevel
+Operation
+```
+
+То есть набор значений известен и контролируется приложением.
+
+Enum хуже подходит для динамических данных, которые пользователь или администратор должен добавлять без изменения/перекомпиляции кода, например справочник категорий из БД.
+
+---
+
+#### Record
+
+**Record** — специальная форма класса для компактного описания объектов, основная роль которых — хранить набор данных.
+
+```java
+record UserDto(long id, String name) {
+}
+```
+
+Часть:
+
+```java
+(long id, String name)
+```
+
+называется **record header**, а `id` и `name` — **record components**.
+
+Для такого record Java предоставляет соответствующие private final fields, public accessor methods, canonical constructor и реализации `equals()`, `hashCode()`, `toString()` согласно семантике records.
+
+Использование:
+
+```java
+UserDto user = new UserDto(1L, "Alice");
+
+System.out.println(user.id());   // 1
+System.out.println(user.name()); // Alice
+```
+
+Обрати внимание: accessor называется:
+
+```java
+name()
+```
+
+а не автоматически:
+
+```java
+getName()
+```
+
+#### Что генерирует record?
+
+Для:
+
+```java
+record Point(int x, int y) {
+}
+```
+
+мы получаем поведение, концептуально похожее на data class с:
+
+- private final fields для components;
+- accessors `x()` и `y()`;
+- canonical constructor `Point(int x, int y)`;
+- `equals()`;
+- `hashCode()`;
+- `toString()`.
+
+Поэтому вместо большого boilerplate:
+
+```java
+final class Point {
+    // fields
+    // constructor
+    // getters
+    // equals
+    // hashCode
+    // toString
+}
+```
+
+часто достаточно:
+
+```java
+record Point(int x, int y) {}
+```
+
+#### Record и equality
+
+```java
+Point first = new Point(10, 20);
+Point second = new Point(10, 20);
+
+System.out.println(first == second);      // false
+System.out.println(first.equals(second)); // true
+```
+
+Records предназначены для представления данных через значения components, поэтому автоматически предоставленный `equals()` сравнивает соответствующие component values по определённому для records контракту, а не identity объекта.
+
+Это делает records удобными для DTO, результатов вычислений, ключей и небольших value-oriented structures.
+
+#### Compact constructor
+
+Record позволяет валидировать входные данные:
+
+```java
+record UserDto(long id, String name) {
+
+    UserDto {
+        if (id <= 0) {
+            throw new IllegalArgumentException("id must be positive");
+        }
+
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("name is required");
+        }
+    }
+}
+```
+
+Это **compact canonical constructor**.
+
+Не нужно повторять список параметров:
+
+```java
+UserDto(long id, String name)
+```
+
+и не нужно явно писать обычные присваивания components полям в конце compact constructor — они выполняются в рамках специальной семантики record constructor.
+
+#### Можно ли добавлять методы в record?
+
+Да:
+
+```java
+record Rectangle(int width, int height) {
+
+    int area() {
+        return width * height;
+    }
+}
+```
+
+Можно добавлять static fields и static methods:
+
+```java
+record UserDto(long id, String name) {
+
+    static UserDto anonymous() {
+        return new UserDto(0, "anonymous");
+    }
+}
+```
+
+То есть record — не просто «структура без логики».
+
+#### Record не имеет дополнительного instance state
+
+Нельзя добавить обычное дополнительное instance field:
+
+```java
+record UserDto(long id, String name) {
+    // private int cache; // нельзя
+}
+```
+
+Состояние record определяется его components.
+
+Static fields допустимы, потому что они не являются состоянием конкретного record instance.
+
+#### Record implicitly final
+
+Record нельзя использовать как обычный superclass:
+
+```java
+record UserDto(long id, String name) {
+}
+
+// class SpecialUserDto extends UserDto { } // нельзя
+```
+
+Record class является final.
+
+Сам record также не может явно `extends` произвольный класс: у records специальная модель наследования и базовый `java.lang.Record`.
+
+Но record может реализовывать interfaces:
+
+```java
+interface Identifiable {
+    long id();
+}
+
+record UserDto(long id, String name)
+        implements Identifiable {
+}
+```
+
+#### Record — это shallow immutability
+
+Очень важный нюанс:
+
+```java
+record Team(List<String> members) {
+}
+```
+
+Reference component нельзя переназначить после создания record, но сам объект `List` может оставаться mutable:
+
+```java
+List<String> members = new ArrayList<>();
+members.add("Alice");
+
+Team team = new Team(members);
+
+members.add("Bob");
+
+System.out.println(team.members());
+// [Alice, Bob]
+```
+
+То есть:
+
+> record не гарантирует deep immutability.
+
+Упрощённо:
+
+```text
+Team
+└── final reference ─────► mutable ArrayList
+                           ├── Alice
+                           └── Bob
+```
+
+Если нужна более сильная immutability, можно сделать defensive copy:
+
+```java
+record Team(List<String> members) {
+
+    Team {
+        members = List.copyOf(members);
+    }
+}
+```
+
+Теперь record хранит собственное неизменяемое представление списка в рамках контракта `List.copyOf` (при условии, что сами элементы не несут отдельно изменяемое состояние, которое требуется глубоко копировать).
+
+#### Можно ли переопределить accessor?
+
+Да, но accessor должен соответствовать правилам record component.
+
+Например:
+
+```java
+record User(String name) {
+
+    @Override
+    public String name() {
+        return name.trim();
+    }
+}
+```
+
+Однако изменять смысл component accessor без серьёзной причины обычно плохая идея: record полезен именно своей прозрачной моделью данных.
+
+#### Record vs обычный class
+
+Record хорош, когда тип по смыслу — **набор данных**:
+
+```java
+record Money(BigDecimal amount, Currency currency) {}
+record UserResponse(long id, String name) {}
+record Coordinates(double latitude, double longitude) {}
+```
+
+Обычный class чаще естественнее, когда:
+
+- объект имеет сложный жизненный цикл;
+- важна изменяемая внутренняя state machine;
+- нужны дополнительные instance fields;
+- требуется наследование от другого класса;
+- identity объекта важнее набора его component values.
+
+Record — не автоматическая замена всех POJO.
+
+#### Record как DTO
+
+Типичный backend-пример:
+
+```java
+record CreateUserRequest(
+        String name,
+        String email
+) {
+}
+
+record UserResponse(
+        long id,
+        String name,
+        String email
+) {
+}
+```
+
+Для DTO records часто удобны: меньше boilerplate и сразу виден набор передаваемых данных.
+
+Но совместимость с конкретным framework/library и его версией всё равно нужно проверять отдельно. Наличие record в Java само по себе не гарантирует, что любой старый serializer, ORM или proxy mechanism умеет работать с ним как с обычным mutable JavaBean.
+
+#### Record и JPA Entity — не одно и то же
+
+В исходном конспекте для JPA Entity указаны требования вроде конструктора без аргументов и ограничения, связанные с proxying. fileciteturn48file6
+
+Record по своей модели — final data carrier с canonical construction и не является прямой заменой обычной JPA Entity.
+
+Поэтому практический ориентир:
+
+```text
+API DTO / projection / value-like data → record часто удобен
+ORM entity с lifecycle/proxying        → проверяем требования JPA/provider
+```
+
+Точные требования к entity и особенности Hibernate будут разобраны в соответствующей главе; здесь важно не делать вывод «record лучше обычного класса вообще».
+
+#### Enum vs Record
+
+Это совершенно разные инструменты:
+
+| Enum | Record |
+| --- | --- |
+| Фиксированный набор экземпляров | Произвольное число экземпляров |
+| Constants известны в declaration | Значения задаются constructor arguments |
+| Хорош для статусов/режимов | Хорош для data carriers/value-like types |
+| Можно сравнивать constants через `==` | Обычно сравниваем через `equals()` |
+| Может иметь поведение на constant | Может иметь методы и валидацию |
+
+Пример:
+
+```java
+enum Currency {
+    EUR,
+    USD
+}
+
+record Money(
+        BigDecimal amount,
+        Currency currency
+) {
+}
+```
+
+Здесь `Currency` — конечный набор допустимых значений, а экземпляров `Money` может быть сколько угодно.
+
+#### Типичные ошибки
+
+**«Enum — это просто int constants».**  
+Нет. Enum constants — объекты enum type; enum может иметь поля, методы, constructor и реализовывать interfaces.
+
+**«Можно хранить ordinal enum в БД без риска».**  
+Технически можно, но перестановка constants изменяет ordinals. Для устойчивого внешнего представления нужен осознанный контракт.
+
+**«Record автоматически глубоко immutable».**  
+Нет. References в components не переназначаются, но объект, на который они указывают, может быть mutable.
+
+**«Record — это просто Lombok @Data».**  
+Нет. Record имеет собственную семантику языка, ограничения на состояние и наследование, а также определённый контракт generated members.
+
+**«Record нельзя содержать методы».**  
+Можно. Нельзя добавлять произвольные дополнительные instance fields, но методы и static members допустимы.
+
+#### Что важно запомнить
+
+- Enum описывает **фиксированный набор именованных экземпляров**.
+- Enum может иметь fields, constructors, methods и реализовывать interfaces.
+- `values()` возвращает constants, `valueOf()` ищет по точному имени.
+- `ordinal()` — позиция constant, а не хороший устойчивый бизнес-ID.
+- Enum constants корректно сравнивать через `==`.
+- Record предназначен прежде всего для компактного представления данных.
+- Record предоставляет canonical constructor, component accessors, `equals/hashCode/toString`.
+- Record implicitly final и не может иметь произвольное дополнительное instance state.
+- Record даёт **shallow**, а не deep immutability.
+- Для mutable components при необходимости используют defensive copies.
+- Record может реализовывать interfaces и содержать собственные методы.
+
+#### На собеседовании
+
+**Чем enum в Java отличается от набора констант?**
+
+> Enum — полноценный специальный тип класса с фиксированным набором экземпляров. Он может иметь поля, constructor, методы и реализовывать interfaces. Каждая enum constant имеет тип самого enum, поэтому компилятор контролирует допустимые значения.
+
+**Почему опасно использовать `ordinal()` как значение в БД?**
+
+> Ordinal зависит от порядка объявления constants. Если переставить или вставить enum constant, числовые значения существующих элементов могут измениться. Поэтому ordinal не стоит считать стабильным внешним идентификатором.
+
+**Что автоматически даёт record?**
+
+> Record объявляет набор components и предоставляет соответствующие final-поля, accessors, canonical constructor, а также equals, hashCode и toString по семантике record. Это уменьшает boilerplate для data carrier типов.
+
+**Record immutable?**
+
+> На уровне своих component references record shallow immutable: эти поля нельзя переназначить после создания. Но если component ссылается на mutable объект, например ArrayList, его содержимое всё ещё можно изменить. Для более сильной иммутабельности нужны defensive copies и immutable components.
+
+#### Источники и уточнения
+
+- В исходном конспекте enum встречается в JPA через `@Enumerated` с вариантами хранения `ORDINAL/STRING`. fileciteturn48file0
+- Также исходник использует enum `LockModeType` для режимов блокировок JPA. fileciteturn48file9
+- Исходник отдельно перечисляет ограничения JPA Entity, что важно не смешивать с моделью record. fileciteturn48file6
+- Отдельного Java Core-объяснения enum/record в найденном исходнике нет; языковые правила раздела добавлены по JLS.
+- [Java Language Specification — Enum Classes](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.9) — семантика enum classes.
+- [Java Language Specification — Record Classes](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10) — record components, constructors, members и ограничения.
+
+**Далее:** 1.13. Аннотации и Reflection — built-in annotations, meta-annotations, retention/target, чтение metadata через Reflection, `Class`, `Method`, `Field`, dynamic invocation и цена/ограничения reflection.
