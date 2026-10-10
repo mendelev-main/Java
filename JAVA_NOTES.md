@@ -2773,3 +2773,603 @@ Overload resolution происходит на compile time. Dynamic dispatch о�
 - [Java Language Specification — Method Invocation](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12) — overload resolution и выбор метода.
 
 **Далее:** 1.9. Классы, интерфейсы и abstract classes — `extends` vs `implements`, default/static/private interface methods, множественная реализация интерфейсов и выбор между interface и abstract class.
+
+---
+
+### 1.9. Interface и abstract class: что выбрать
+
+И **interface**, и **abstract class** позволяют описать абстракцию, но решают немного разные задачи.
+
+Короткий ориентир:
+
+```text
+interface
+→ контракт / capability
+→ разные классы могут реализовать один интерфейс
+→ класс может реализовать несколько интерфейсов
+
+abstract class
+→ общая база близких классов
+→ может хранить instance state
+→ может иметь constructor
+→ класс может наследоваться только от одного класса
+```
+
+> В найденных фрагментах исходного конспекта интерфейсы используются в контексте SOLID и Spring, но отдельного сравнения interface vs abstract class нет. Поэтому языковые правила этого подраздела добавлены по Java Language Specification. Из исходника сохраняется практическая идея Interface Segregation: небольшие специализированные интерфейсы обычно предпочтительнее одного огромного.
+
+#### Interface
+
+**Interface** задаёт контракт, который класс обязуется реализовать.
+
+```java
+interface PaymentProcessor {
+    void pay(long amount);
+}
+```
+
+Реализация:
+
+```java
+class CardPaymentProcessor implements PaymentProcessor {
+
+    @Override
+    public void pay(long amount) {
+        System.out.println("Card payment: " + amount);
+    }
+}
+```
+
+Клиент может зависеть от интерфейса:
+
+```java
+class OrderService {
+    private final PaymentProcessor processor;
+
+    OrderService(PaymentProcessor processor) {
+        this.processor = processor;
+    }
+
+    void checkout(long amount) {
+        processor.pay(amount);
+    }
+}
+```
+
+В результате `OrderService` не привязан к конкретной реализации оплаты.
+
+Именно такой подход постоянно встречается в Spring: зависимость объявляется через интерфейс, а конкретную реализацию предоставляет контейнер.
+
+#### Abstract class
+
+**Abstract class** — класс, экземпляр которого нельзя создать напрямую и который может содержать как абстрактное, так и готовое поведение.
+
+```java
+abstract class PaymentProcessor {
+
+    protected final String providerName;
+
+    protected PaymentProcessor(String providerName) {
+        this.providerName = providerName;
+    }
+
+    public abstract void pay(long amount);
+
+    public void printProvider() {
+        System.out.println(providerName);
+    }
+}
+```
+
+Наследник обязан реализовать абстрактный метод, если сам не является abstract:
+
+```java
+class CardPaymentProcessor extends PaymentProcessor {
+
+    CardPaymentProcessor() {
+        super("Card provider");
+    }
+
+    @Override
+    public void pay(long amount) {
+        System.out.println("Card payment: " + amount);
+    }
+}
+```
+
+Abstract class может иметь:
+
+- instance fields;
+- constructors;
+- abstract methods;
+- обычные concrete methods;
+- `static` methods;
+- методы и поля с различными допустимыми access modifiers.
+
+То есть abstract class подходит не только для контракта, но и для **общего состояния и общей реализации** иерархии.
+
+#### `extends` и `implements`
+
+Класс наследуется от класса через `extends`:
+
+```java
+class Dog extends Animal {
+}
+```
+
+Класс реализует интерфейс через `implements`:
+
+```java
+class Dog implements Runnable {
+    @Override
+    public void run() {
+    }
+}
+```
+
+Можно совместить:
+
+```java
+class Dog extends Animal implements Runnable, Comparable<Dog> {
+
+    @Override
+    public void run() {
+    }
+
+    @Override
+    public int compareTo(Dog other) {
+        return 0;
+    }
+}
+```
+
+Java разрешает классу:
+
+```text
+extends     → максимум один непосредственный superclass
+implements  → несколько interfaces
+```
+
+Сам интерфейс может наследовать несколько интерфейсов:
+
+```java
+interface Readable {
+    void read();
+}
+
+interface Writable {
+    void write();
+}
+
+interface Storage extends Readable, Writable {
+}
+```
+
+#### Поля интерфейса
+
+Переменные, объявленные в interface, не являются instance fields.
+
+Например:
+
+```java
+interface Limits {
+    int MAX_RETRIES = 3;
+}
+```
+
+Поле интерфейса неявно:
+
+```java
+public static final int MAX_RETRIES = 3;
+```
+
+Поэтому интерфейс не хранит изменяемое состояние конкретного экземпляра так, как обычный или abstract class.
+
+Если абстракции действительно нужно общее instance state:
+
+```java
+protected int retryCount;
+```
+
+это аргумент в пользу abstract class или композиции.
+
+#### Методы интерфейса: не только abstract
+
+Историческая формула «interface содержит только abstract methods» для современной Java неверна.
+
+Interface может содержать несколько видов методов.
+
+**Abstract method:**
+
+```java
+interface Sender {
+    void send(String message);
+}
+```
+
+Такой метод неявно `public abstract`.
+
+**Default method** — появился в Java 8:
+
+```java
+interface Sender {
+
+    void send(String message);
+
+    default void sendDefaultMessage() {
+        send("Hello");
+    }
+}
+```
+
+Он содержит реализацию и наследуется реализующими классами.
+
+Одна из важных причин появления default methods — возможность **эволюционировать интерфейсы**, добавляя поведение без обязательного немедленного изменения каждой существующей реализации.
+
+**Static method:**
+
+```java
+interface Sender {
+
+    static boolean isValid(String message) {
+        return message != null && !message.isBlank();
+    }
+}
+```
+
+Вызывается через имя интерфейса:
+
+```java
+Sender.isValid("Hello");
+```
+
+Static interface method не является instance-методом реализации.
+
+**Private method** — поддерживается в interfaces начиная с Java 9:
+
+```java
+interface Sender {
+
+    default void sendHello() {
+        sendNormalized(" hello ");
+    }
+
+    default void sendBye() {
+        sendNormalized(" bye ");
+    }
+
+    private void sendNormalized(String message) {
+        send(message.trim());
+    }
+
+    void send(String message);
+}
+```
+
+Private methods позволяют вынести повторяющуюся внутреннюю логику нескольких default/private методов и не выставлять её как часть публичного контракта.
+
+#### Зачем default methods?
+
+Представим библиотечный интерфейс:
+
+```java
+interface Logger {
+    void log(String message);
+}
+```
+
+У него сотни реализаций. Если просто добавить новый abstract method:
+
+```java
+void logError(String message);
+```
+
+старые реализации перестанут удовлетворять контракту.
+
+Default method позволяет предоставить реализацию:
+
+```java
+interface Logger {
+
+    void log(String message);
+
+    default void logError(String message) {
+        log("ERROR: " + message);
+    }
+}
+```
+
+Существующие реализации получают новое поведение автоматически, если им не требуется его переопределять.
+
+#### Конфликт default methods
+
+Несколько интерфейсов могут содержать одинаковый default method:
+
+```java
+interface A {
+    default void hello() {
+        System.out.println("A");
+    }
+}
+
+interface B {
+    default void hello() {
+        System.out.println("B");
+    }
+}
+```
+
+Если класс реализует оба:
+
+```java
+class C implements A, B {
+}
+```
+
+компилятор не может сам выбрать реализацию. Класс обязан разрешить конфликт:
+
+```java
+class C implements A, B {
+
+    @Override
+    public void hello() {
+        A.super.hello();
+    }
+}
+```
+
+Можно вызвать одну из родительских реализаций либо написать полностью свою.
+
+Это иногда называют **diamond problem**, но Java не допускает неоднозначность молча — конфликт должен быть разрешён явно.
+
+#### Class wins over interface default
+
+Если метод уже существует в superclass, а interface предлагает default method с той же подходящей сигнатурой, приоритет имеет метод класса.
+
+Упрощённое правило:
+
+```text
+class implementation > interface default
+```
+
+Это важно для совместимости старых классов после появления default methods.
+
+#### Abstract class тоже может реализовать interface
+
+```java
+interface Sender {
+    void send(String message);
+}
+
+abstract class BaseSender implements Sender {
+
+    protected void validate(String message) {
+        if (message == null) {
+            throw new IllegalArgumentException();
+        }
+    }
+}
+```
+
+`BaseSender` может не реализовывать `send()`, потому что сам является abstract.
+
+Конкретный наследник завершает контракт:
+
+```java
+class EmailSender extends BaseSender {
+
+    @Override
+    public void send(String message) {
+        validate(message);
+        System.out.println("Email: " + message);
+    }
+}
+```
+
+Это позволяет сочетать интерфейс как внешний контракт и abstract class как необязательную базовую реализацию.
+
+#### Может ли abstract class не иметь abstract methods?
+
+Да:
+
+```java
+abstract class BaseService {
+
+    public void log() {
+        System.out.println("log");
+    }
+}
+```
+
+Ключевое слово `abstract` запрещает создавать экземпляр напрямую:
+
+```java
+// new BaseService(); // compile error
+```
+
+Наличие хотя бы одного abstract method не является обязательным.
+
+Обратное правило строгое: если класс содержит abstract method, сам класс должен быть `abstract`.
+
+#### Abstract method и `final`
+
+`abstract` означает:
+
+> наследник должен предоставить реализацию.
+
+`final` для метода означает:
+
+> наследник не может переопределить метод.
+
+Поэтому сочетание:
+
+```java
+// abstract final void execute();
+```
+
+логически противоречиво и запрещено.
+
+А вот abstract class может иметь final concrete method:
+
+```java
+abstract class Processor {
+
+    public final void execute() {
+        validate();
+        process();
+    }
+
+    protected abstract void process();
+
+    private void validate() {
+        // ...
+    }
+}
+```
+
+Это позволяет зафиксировать общий алгоритм, оставив наследнику отдельную точку расширения.
+
+#### Interface vs abstract class
+
+Для быстрого повторения:
+
+| Interface | Abstract class |
+| --- | --- |
+| Хорош для контракта/capability | Хорош для общей базы иерархии |
+| Класс может реализовать несколько | Наследоваться можно только от одного класса |
+| Нет instance state | Может иметь instance state |
+| Нет constructor | Может иметь constructor |
+| Может иметь abstract/default/static/private methods | Может иметь abstract и concrete methods |
+| Поля — `public static final` | Возможны обычные instance/static fields |
+| Удобен для слабой связанности | Удобен для общего состояния и реализации |
+
+#### Как выбирать на практике?
+
+**Выбирай interface**, когда:
+
+- нужен контракт для потенциально несвязанных классов;
+- ожидается несколько взаимозаменяемых реализаций;
+- важна возможность реализовать несколько контрактов;
+- абстракция не требует общего mutable instance state;
+- зависимость должна легко подменяться, например в DI или тестах.
+
+Пример:
+
+```java
+interface PaymentGateway {
+    PaymentResult pay(Order order);
+}
+```
+
+Реализации Stripe, банковского API или тестовый fake не обязаны иметь общего superclass.
+
+**Рассматривай abstract class**, когда:
+
+- классы действительно принадлежат одной иерархии;
+- им нужно общее состояние;
+- нужен общий constructor;
+- существенная часть реализации одинакова;
+- нужно предоставить `protected` API наследникам.
+
+На практике часто полезна комбинация:
+
+```text
+interface
+   │
+   ├── Implementation A
+   │
+   └── abstract BaseImplementation
+              │
+              ├── Implementation B
+              └── Implementation C
+```
+
+Клиенты зависят от интерфейса, а некоторые реализации при необходимости переиспользуют общую базу.
+
+#### Интерфейсы и Interface Segregation
+
+В исходном конспекте принцип **Interface Segregation Principle (ISP)** сформулирован как идея:
+
+> лучше несколько небольших интерфейсов, чем один огромный.
+
+Например, вместо:
+
+```java
+interface Worker {
+    void code();
+    void drive();
+    void cook();
+}
+```
+
+лучше выделить отдельные способности:
+
+```java
+interface Developer {
+    void code();
+}
+
+interface Driver {
+    void drive();
+}
+```
+
+Тогда класс реализует только тот контракт, который ему действительно нужен.
+
+Подробно ISP и остальные принципы SOLID будут разобраны отдельно.
+
+#### Типичные ошибки
+
+**«В interface нельзя писать реализацию методов».**  
+Устарело. В современной Java есть default, static и private interface methods.
+
+**«Interface вообще не может содержать поля».**  
+Может, но они неявно `public static final` — это константы интерфейса, а не instance state.
+
+**«Abstract class обязан иметь abstract method».**  
+Нет. Abstract class может вообще не иметь abstract methods.
+
+**«Interface всегда лучше abstract class».**  
+Нет. Они решают разные задачи. Если нужна общая база с состоянием и constructor, abstract class может быть естественнее.
+
+**«Java поддерживает множественное наследование классов через interfaces».**  
+Interface даёт множественное наследование **контрактов** и в современной Java некоторого поведения через default methods, но класс по-прежнему имеет только один непосредственный superclass и не наследует instance state из interfaces.
+
+#### Что важно запомнить
+
+- Класс может `extends` только один класс, но `implements` несколько interfaces.
+- Interface — прежде всего **контракт**, abstract class — **общая база иерархии** с возможностью хранить state.
+- Interface fields неявно `public static final`.
+- Interface может иметь abstract, default, static и private methods.
+- Default methods появились в Java 8; private interface methods — в Java 9.
+- Конфликт одинаковых default methods нескольких interfaces класс должен разрешить явно.
+- Abstract class может иметь constructor и может не содержать ни одного abstract method.
+- `abstract` и `final` нельзя одновременно применять к одному методу.
+- На практике часто удобно дать клиентам interface, а общую реализацию вынести в abstract base class только там, где она действительно нужна.
+
+#### На собеседовании
+
+**Чем interface отличается от abstract class?**
+
+> Interface обычно описывает контракт и позволяет одному классу реализовать несколько независимых контрактов. Abstract class подходит для общей иерархии: может хранить instance state, иметь constructor, protected members и общую реализацию. Класс может наследоваться только от одного класса, но реализовать несколько interfaces.
+
+**Какие методы могут быть в interface?**
+
+> Abstract methods, default и static methods начиная с Java 8, а также private methods начиная с Java 9. Default method наследуется реализациями, static вызывается через интерфейс, private используется для внутреннего переиспользования логики внутри самого interface.
+
+**Что произойдёт, если два интерфейса имеют одинаковый default method?**
+
+> Если класс наследует конфликтующие default implementations и ни одна не имеет приоритета, класс должен явно переопределить метод и разрешить конфликт. При необходимости можно вызвать конкретную реализацию через `InterfaceName.super.method()`.
+
+**Может ли abstract class не содержать abstract methods?**
+
+> Да. `abstract` запрещает прямое создание экземпляра класса, но не требует наличия abstract methods. При этом класс с abstract method сам обязательно должен быть abstract.
+
+#### Источники и уточнения
+
+- Исходный конспект использует interfaces в разделах Spring и SOLID; в частности, ISP сформулирован как предпочтение нескольких небольших интерфейсов одному большому. fileciteturn36file0
+- Отдельного сравнения interface и abstract class в найденном исходном материале нет; языковые правила раздела добавлены по JLS.
+- [Java Language Specification — Classes](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html) — abstract classes, inheritance и members.
+- [Java Language Specification — Interfaces](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html) — interface declarations, fields, default/static/private methods и наследование.
+- [Java Language Specification — Overriding](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1) — правила overriding interface methods.
+
+**Далее:** 1.10. Модификаторы `static` и `final` — class/instance members, static initialization, final variables/methods/classes, effectively final и важные ограничения.
