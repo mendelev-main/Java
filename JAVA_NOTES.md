@@ -155,3 +155,273 @@ Execution Engine
 - [JDK Tool Specifications](https://docs.oracle.com/en/java/javase/26/docs/specs/man/index.html) — инструменты `java`, `javac`, `jar` и др.
 
 **Далее:** 1.2. Архитектура JVM — ClassLoader, загрузка/связывание/инициализация классов, Execution Engine.
+
+---
+
+### 1.2. Архитектура JVM: ClassLoader и загрузка классов
+
+На верхнем уровне работу JVM удобно представить как несколько связанных частей:
+
+```text
+.class-файлы
+     │
+     ▼
+ClassLoader Subsystem
+     │
+     ▼
+Runtime Data Areas
+     │
+     ▼
+Execution Engine
+  ├── Interpreter
+  ├── JIT
+  └── Garbage Collector
+     │
+     ▼
+Native / OS
+```
+
+В этом подразделе разберём **ClassLoader Subsystem** — как JVM находит и загружает классы. Память JVM и Garbage Collector рассмотрим отдельно.
+
+#### Зачем нужен ClassLoader?
+
+**ClassLoader** — механизм JVM, который находит байткод класса и создаёт его представление внутри JVM (`Class<?>`).
+
+Классы не обязаны загружаться все сразу при старте приложения. JVM может загружать их **по мере необходимости**.
+
+Например, когда приложение впервые обращается к `com.example.UserService`, JVM должна понять:
+
+1. не загружен ли этот класс ранее;
+2. кто должен его загрузить;
+3. где найти его байткод;
+4. корректен ли найденный class-файл;
+5. как связать класс с другими типами.
+
+#### Основные ClassLoader'ы
+
+В современной Java обычно выделяют три основных уровня:
+
+```text
+Bootstrap ClassLoader
+        ▲
+        │
+Platform ClassLoader
+        ▲
+        │
+Application ClassLoader
+```
+
+**Bootstrap ClassLoader** — самый верхний уровень. Загружает базовые классы и критически важные модули Java, включая `java.base`.
+
+Например:
+
+```java
+System.out.println(String.class.getClassLoader());
+```
+
+Обычно увидим:
+
+```text
+null
+```
+
+Это **не означает, что у `String` нет загрузчика**. В Java API Bootstrap ClassLoader исторически представлен как `null`.
+
+**Platform ClassLoader** загружает классы платформы, которые не относятся к базовой части, загружаемой Bootstrap.
+
+**Application (System) ClassLoader** обычно загружает код нашего приложения и его зависимости из classpath.
+
+```java
+public class Main {
+    public static void main(String[] args) {
+        System.out.println(Main.class.getClassLoader());
+    }
+}
+```
+
+Для обычного приложения здесь, как правило, будет Application ClassLoader.
+
+> **Нюанс версий:** до Java 9 существовал **Extension ClassLoader**, связанный с механизмом extensions (`jre/lib/ext`). Начиная с Java 9 его роль в современной модели занимает **Platform ClassLoader**. Поэтому ответ «Bootstrap → Extension → Application» относится к старым версиям Java.
+
+#### Parent Delegation Model
+
+По умолчанию загрузчики используют модель **parent-first delegation**.
+
+Если Application ClassLoader получил запрос на загрузку класса, он не обязательно сразу ищет его среди классов приложения. Сначала запрос делегируется вверх по цепочке.
+
+Упрощённо:
+
+```text
+Application
+    │
+    │ delegate
+    ▼
+Platform
+    │
+    │ delegate
+    ▼
+Bootstrap
+    │
+    ├── найден → вернуть класс
+    │
+    └── не найден
+           ▲
+           │ Platform пробует найти сам
+           ▲
+           │ Application пробует найти сам
+```
+
+Для типичного `ClassLoader.loadClass(name)` логика выглядит примерно так:
+
+1. Проверить, не был ли класс уже загружен.
+2. Передать запрос родительскому загрузчику.
+3. Если родитель класс не нашёл — попытаться найти его самостоятельно.
+4. Если класс нигде не найден — загрузка завершается ошибкой.
+
+Зачем сначала спрашивать родителя? Одна из причин — **предсказуемость и защита базовых классов платформы**. Код приложения не должен случайно подменить, например, стандартный `java.lang.String` своей копией.
+
+**Parent-first — стандартная модель, но не абсолютное правило для всех систем.** Пользовательские загрузчики и некоторые контейнеры/плагинные системы могут применять другую стратегию, например child-first.
+
+#### Loading, Linking и Initialization
+
+Жизненный цикл класса не заканчивается чтением `.class`-файла.
+
+Упрощённо:
+
+```text
+Loading
+   │
+   ▼
+Linking
+ ├── Verification
+ ├── Preparation
+ └── Resolution
+   │
+   ▼
+Initialization
+```
+
+**Loading** — JVM находит бинарное представление класса и создаёт его представление в памяти.
+
+**Linking** — подготовка загруженного класса к использованию:
+
+- **Verification** — проверка корректности class-файла и байткода.
+- **Preparation** — создаются необходимые структуры для static-полей и устанавливаются их начальные значения по правилам JVM.
+- **Resolution** — символические ссылки на другие классы, методы и поля преобразуются в конкретные ссылки JVM. Resolution может выполняться лениво.
+
+**Initialization** — выполняется логика инициализации класса: в частности, присваивания static-полям и static-блоки, собранные компилятором в метод инициализации класса `<clinit>`.
+
+Пример:
+
+```java
+class Config {
+    static int port = initPort();
+
+    static {
+        System.out.println("Config initialized");
+    }
+
+    private static int initPort() {
+        return 8080;
+    }
+}
+```
+
+Загрузка класса и его **инициализация — не одно и то же**. JVM может загрузить и связать класс раньше, чем возникнет необходимость его инициализировать.
+
+#### Идентичность класса: имя + ClassLoader
+
+Для JVM тип определяется не только полным именем класса.
+
+Упрощённо:
+
+```text
+Class identity = binary name + defining ClassLoader
+```
+
+Допустим, два независимых ClassLoader загрузили один и тот же:
+
+```text
+com.example.Plugin
+```
+
+Для JVM это могут быть **два разных типа**, даже если байткод взят из одного и того же JAR.
+
+Именно это позволяет плагинным системам изолировать разные версии библиотек. Но отсюда возникает и важная ловушка: объект класса, загруженного одним ClassLoader, нельзя автоматически считать экземпляром «такого же» класса, загруженного другим ClassLoader. Это может привести к `ClassCastException`.
+
+#### Custom ClassLoader
+
+Можно создать собственный загрузчик:
+
+```java
+class PluginClassLoader extends ClassLoader {
+
+    @Override
+    protected Class<?> findClass(String name) throws ClassNotFoundException {
+        byte[] bytes = loadClassBytes(name); // условный метод
+        return defineClass(name, bytes, 0, bytes.length);
+    }
+
+    private byte[] loadClassBytes(String name) {
+        // Читаем bytecode из нужного источника
+        throw new UnsupportedOperationException();
+    }
+}
+```
+
+Обычно переопределяют **`findClass()`**, а стандартный `loadClass()` оставляют без изменений, чтобы сохранить parent-first delegation.
+
+Собственные загрузчики нужны, например, для:
+
+- плагинных архитектур;
+- изоляции разных версий библиотек;
+- hot reload / hot deploy;
+- загрузки байткода из нестандартного источника.
+
+Для обычного backend-приложения писать свой ClassLoader почти никогда не требуется, но понимание механизма полезно при разборе контейнеров, application servers, драйверов, SPI и проблем с зависимостями.
+
+#### Типичные ошибки
+
+**`ClassNotFoundException`** — приложение явно пытается загрузить класс, но загрузчик не может его найти.
+
+**`NoClassDefFoundError`** — JVM во время выполнения не может получить определение класса, которое требуется программе; причины шире, чем просто «нет JAR в runtime», например предыдущая неудачная инициализация класса.
+
+**`LinkageError`** — семейство ошибок, возникающих при проблемах связывания/определения классов.
+
+**`ClassCastException` при разных ClassLoader'ах** — два класса могут иметь одинаковое имя, но быть разными типами для JVM.
+
+#### Что важно запомнить
+
+- ClassLoader загружает классы **по мере необходимости**, а не обязательно все при старте.
+- Основная цепочка современной Java: **Bootstrap → Platform → Application**.
+- До Java 9 вместо Platform в старой модели использовался **Extension ClassLoader**.
+- Стандартная модель делегирования — **parent-first**: сначала пытается родитель, затем текущий загрузчик.
+- Загрузка класса проходит через **Loading → Linking → Initialization**; Linking включает Verification, Preparation и Resolution.
+- Для JVM идентичность типа определяется **именем класса + defining ClassLoader**.
+- Пользовательские ClassLoader'ы позволяют изолировать плагины и версии библиотек.
+
+#### На собеседовании
+
+**Какие основные ClassLoader'ы есть в Java?**
+
+> В современной Java это Bootstrap, Platform и Application ClassLoader. Bootstrap загружает базовую часть платформы, Platform — остальные платформенные классы, а Application — обычно код приложения и зависимости. До Java 9 вместо Platform использовался Extension ClassLoader.
+
+**Как работает parent delegation?**
+
+> Когда загрузчик получает запрос на класс, он сначала проверяет уже загруженные классы и делегирует поиск родителю. Если родитель не нашёл класс, текущий загрузчик пытается загрузить его сам. Это помогает избежать дублирования и случайной подмены базовых классов.
+
+**Могут ли два класса с одинаковым полным именем быть разными типами?**
+
+> Да. Для JVM идентичность типа определяется не только именем, но и defining ClassLoader. Поэтому одинаковый класс, загруженный двумя независимыми ClassLoader'ами, может считаться двумя разными типами.
+
+**Чем Loading отличается от Initialization?**
+
+> Loading создаёт представление класса в JVM на основе его бинарного представления. После этого идёт Linking. Initialization — отдельный более поздний этап, на котором выполняется инициализация static-полей и static-блоков класса.
+
+#### Источники и уточнения
+
+- Основная база: пользовательский конспект «Копия Срез 2–8 Java», темы про ClassLoader, существующие загрузчики, parent delegation, системный и custom ClassLoader.
+- [Java Virtual Machine Specification — Loading, Linking, and Initializing](https://docs.oracle.com/en/java/javase/26/docs/specs/jvms/se26/html/jvms-5.html) — формальная модель загрузки, связывания и инициализации.
+- [ClassLoader API](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/ClassLoader.html) — API и модель делегирования.
+
+**Далее:** 1.3. Память JVM — Heap, Stack, Stack Frame, Metaspace и Code Cache.
