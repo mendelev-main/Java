@@ -1056,3 +1056,393 @@ Runtime.getRuntime().gc();
 - [Z Garbage Collector](https://docs.oracle.com/en/java/javase/26/gctuning/z-garbage-collector.html) — актуальная документация ZGC.
 
 **Далее:** 1.5. Типы данных Java — primitive/reference types, преобразования, numeric promotion и особенности floating-point.
+
+---
+
+### 1.5. Типы данных Java: primitives, references и преобразования
+
+В Java тип определяет, **какие значения может хранить переменная и какие операции над ними разрешены**. На верхнем уровне типы удобно разделить на две группы:
+
+```text
+Java types
+├── Primitive types
+│   ├── boolean
+│   ├── byte, short, int, long
+│   ├── char
+│   └── float, double
+│
+└── Reference types
+    ├── classes
+    ├── interfaces
+    ├── arrays
+    └── ...
+```
+
+> В исходном конспекте отдельного полноценного блока по базовым типам данных найдено мало, поэтому этот подраздел в основном дополняет базу материалом из Java Language Specification.
+
+#### Primitive types
+
+В Java есть **8 primitive types**:
+
+| Тип | Размер / представление | Пример |
+| --- | --- | --- |
+| `byte` | 8-bit signed integer | `byte b = 10;` |
+| `short` | 16-bit signed integer | `short s = 1000;` |
+| `int` | 32-bit signed integer | `int n = 42;` |
+| `long` | 64-bit signed integer | `long id = 42L;` |
+| `float` | 32-bit IEEE 754 floating-point | `float f = 1.5F;` |
+| `double` | 64-bit IEEE 754 floating-point | `double d = 1.5;` |
+| `char` | 16-bit unsigned UTF-16 code unit | `char c = 'A';` |
+| `boolean` | `true` или `false` | `boolean active = true;` |
+
+Диапазоны целочисленных типов:
+
+```text
+byte   -128 ... 127
+short  -32768 ... 32767
+int    -2^31 ... 2^31 - 1
+long   -2^63 ... 2^63 - 1
+char   0 ... 65535
+```
+
+Для `boolean` Java Language Specification не задаёт «размер в байтах», который следует использовать как языковую гарантию. Поэтому ответ «boolean занимает 1 byte» для собеседования слишком категоричен: физическое представление зависит от реализации JVM и контекста хранения.
+
+#### Primitive и Reference — главное отличие
+
+Primitive-переменная хранит **само значение**:
+
+```java
+int age = 30;
+```
+
+Reference-переменная содержит **ссылочное значение**, позволяющее обратиться к объекту:
+
+```java
+User user = new User();
+```
+
+Упрощённо:
+
+```text
+int age = 30
+
+age
+┌────┐
+│ 30 │
+└────┘
+
+User user = new User()
+
+user                     object
+┌───────────┐           ┌────────────┐
+│ reference ├──────────►│ User       │
+└───────────┘           └────────────┘
+```
+
+Reference-переменная может иметь значение `null`:
+
+```java
+User user = null;
+```
+
+Primitive — нет:
+
+```java
+int value = null; // compile error
+```
+
+Wrapper-классы (`Integer`, `Long`, `Boolean` и т. д.) являются **reference types**, а не primitives. Autoboxing подробно рассмотрим следующим подразделом.
+
+#### Default values и локальные переменные
+
+Поля объекта получают default values автоматически:
+
+```java
+class Example {
+    int number;       // 0
+    boolean active;   // false
+    String text;      // null
+}
+```
+
+Для полей основные значения по умолчанию:
+
+- integer types → `0`;
+- floating-point → `0.0`;
+- `char` → `'\u0000'`;
+- `boolean` → `false`;
+- references → `null`.
+
+Но **локальная переменная не получает значение, которое можно просто прочитать без инициализации**:
+
+```java
+void test() {
+    int value;
+    System.out.println(value); // compile error
+}
+```
+
+Компилятор применяет правила **definite assignment** и не позволит использовать локальную переменную до того, как она гарантированно получила значение.
+
+#### Integer literals: почему иногда нужен L?
+
+Целочисленный литерал без суффикса обычно имеет тип `int`, если значение помещается в `int`.
+
+```java
+int a = 100;
+long b = 100;
+```
+
+Во второй строке `int`-значение безопасно расширяется до `long`.
+
+Но большое значение нужно записать как `long` literal:
+
+```java
+long population = 8_000_000_000L;
+```
+
+Без `L` литерал не представим как обычный decimal `int`.
+
+Обычно используют заглавную `L`, потому что строчная `l` визуально похожа на цифру `1`.
+
+#### Floating-point literals: почему float требует F?
+
+Floating-point literal без суффикса имеет тип `double`:
+
+```java
+double d = 1.5;
+```
+
+Поэтому это не скомпилируется:
+
+```java
+float f = 1.5; // compile error
+```
+
+Нужно явно указать `float`:
+
+```java
+float f = 1.5F;
+```
+
+Причина в том, что преобразование `double → float` является narrowing conversion и может потерять точность.
+
+#### Widening conversion
+
+**Widening primitive conversion** — преобразование в тип, способный представить более широкий набор значений соответствующей категории. Во многих случаях выполняется автоматически:
+
+```java
+int value = 100;
+long big = value;
+double d = big;
+```
+
+Упрощённая цепочка числовых расширений:
+
+```text
+byte ─► short ─► int ─► long ─► float ─► double
+          char ─► int ────────► ...
+```
+
+Но «widening» не означает «никогда не теряется точность».
+
+Например:
+
+```java
+long value = 9_007_199_254_740_993L;
+double d = value;
+
+System.out.println((long) d == value); // false
+```
+
+`double` имеет огромный диапазон, но не способен точно представить каждое 64-bit integer value.
+
+#### Narrowing conversion
+
+При переходе к более узкому типу обычно требуется явный cast:
+
+```java
+int value = 130;
+byte b = (byte) value;
+
+System.out.println(b); // -126
+```
+
+Почему `-126`? При narrowing сохраняются только подходящие младшие биты; результат может полностью изменить числовое значение.
+
+Поэтому cast означает не «сделай безопасно», а скорее:
+
+> Я явно разрешаю это преобразование и принимаю возможную потерю информации.
+
+#### Integer overflow
+
+Java не выбрасывает исключение при обычном переполнении `int` или `long`:
+
+```java
+int max = Integer.MAX_VALUE;
+System.out.println(max + 1);
+```
+
+Результат:
+
+```text
+-2147483648
+```
+
+Целочисленная арифметика для этих типов работает с фиксированной разрядностью, поэтому происходит wrap-around.
+
+Если переполнение должно считаться ошибкой, можно использовать методы:
+
+```java
+Math.addExact(a, b);
+Math.multiplyExact(a, b);
+```
+
+Они выбрасывают `ArithmeticException` при overflow.
+
+#### Numeric promotion: почему byte + byte даёт int?
+
+Это популярная ловушка:
+
+```java
+byte a = 10;
+byte b = 20;
+
+// byte c = a + b; // compile error
+int c = a + b;
+```
+
+При арифметических операциях `byte`, `short` и `char` обычно проходят **binary numeric promotion** до `int`.
+
+Поэтому результат `a + b` здесь имеет тип `int`.
+
+Ещё пример:
+
+```java
+byte x = 10;
+x += 1;       // OK
+// x = x + 1; // compile error
+```
+
+Compound assignment содержит неявное преобразование обратно к типу левой части. То есть `x += 1` по правилам языка не полностью эквивалентно простой записи `x = x + 1`.
+
+#### char — это не «маленькая String»
+
+`char` представляет **один UTF-16 code unit**, а не обязательно один полноценный Unicode-символ.
+
+```java
+char c = 'A';
+System.out.println((int) c); // 65
+```
+
+Некоторые Unicode code points требуют **двух char** (surrogate pair). Поэтому:
+
+```java
+String emoji = "😀";
+System.out.println(emoji.length()); // 2
+```
+
+`String.length()` возвращает количество UTF-16 code units, а не количество визуально воспринимаемых символов.
+
+Эту тему подробнее разберём в отдельной главе **String & Immutability**.
+
+#### float и double: почему 0.1 + 0.2 != 0.3?
+
+`float` и `double` используют binary floating-point representation. Многие привычные десятичные дроби нельзя представить в двоичной системе точно.
+
+```java
+double result = 0.1 + 0.2;
+
+System.out.println(result);        // 0.30000000000000004
+System.out.println(result == 0.3); // false
+```
+
+Поэтому сравнение вычисленных floating-point values через `==` часто некорректно для прикладной задачи.
+
+Для научных расчётов обычно учитывают допустимую погрешность:
+
+```java
+double epsilon = 1e-9;
+
+if (Math.abs(a - b) < epsilon) {
+    // достаточно близкие значения для выбранной задачи
+}
+```
+
+Для денег, где важна **точная десятичная арифметика**, обычно используют `BigDecimal`:
+
+```java
+BigDecimal price = new BigDecimal("0.1");
+BigDecimal tax = new BigDecimal("0.2");
+
+System.out.println(price.add(tax)); // 0.3
+```
+
+Предпочтительнее строковый конструктор или `BigDecimal.valueOf(...)`, а не `new BigDecimal(0.1)`, потому что последний получает уже неточное binary floating-point значение.
+
+#### NaN и Infinity
+
+Floating-point арифметика имеет специальные значения:
+
+```java
+double positiveInfinity = 1.0 / 0.0;
+double nan = 0.0 / 0.0;
+
+System.out.println(positiveInfinity); // Infinity
+System.out.println(nan);              // NaN
+```
+
+В отличие от integer division:
+
+```java
+int x = 1 / 0; // ArithmeticException
+```
+
+Особенно важно поведение `NaN`:
+
+```java
+double value = Double.NaN;
+
+System.out.println(value == value);       // false
+System.out.println(Double.isNaN(value));  // true
+```
+
+`NaN` не равен даже самому себе при обычном операторе `==`.
+
+#### Что важно запомнить
+
+- В Java **8 primitive types**; всё остальное относится к reference types.
+- Reference может быть `null`, primitive — нет.
+- Поля получают default values, а локальные переменные должны пройти definite assignment перед чтением.
+- `byte`, `short` и `char` в арифметике часто продвигаются до `int`.
+- Widening обычно не требует cast, narrowing обычно требует, но widening всё равно иногда может потерять **точность**.
+- Integer overflow обычно не выбрасывает исключение; для контролируемой арифметики есть `Math.*Exact`.
+- `float/double` не подходят для точной денежной арифметики; обычно используют `BigDecimal`.
+- `char` — UTF-16 code unit, а не гарантированно один Unicode character.
+
+#### На собеседовании
+
+**Какие primitive types есть в Java?**
+
+> Восемь: byte, short, int, long, float, double, char и boolean. Первые четыре — целочисленные signed-типы, char — unsigned UTF-16 code unit, float и double — floating-point, boolean хранит true или false.
+
+**Почему byte + byte возвращает int?**
+
+> Из-за правил numeric promotion. Перед большинством арифметических операций byte, short и char продвигаются до int, поэтому результат сложения двух byte имеет тип int.
+
+**Чем widening отличается от narrowing?**
+
+> Widening преобразует значение к более широкому типу и обычно выполняется автоматически. Narrowing может отбросить часть информации и обычно требует явного cast. При этом widening тоже не гарантирует сохранение точности, например long → double может округлить большое целое.
+
+**Почему для денег не стоит использовать double?**
+
+> Потому что double хранит двоичную floating-point аппроксимацию, и многие десятичные дроби вроде 0.1 представлены неточно. Для точной десятичной арифметики обычно используют BigDecimal с корректным способом создания значения.
+
+#### Источники и уточнения
+
+- В пользовательском конспекте отдельный полноценный блок по primitive/reference types в найденных материалах отсутствует; текущий подраздел добавлен как необходимая база Java Core.
+- [Java Language Specification — Types, Values, and Variables](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html) — система типов Java.
+- [Java Language Specification — Conversions and Contexts](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html) — widening, narrowing и numeric promotion.
+- [Java Language Specification — Expressions](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html) — арифметика, compound assignment и операторы.
+
+**Далее:** 1.6. Wrapper classes и autoboxing/unboxing — Integer cache, сравнение через `==` и `equals()`, nullable wrappers и типичные ловушки.
