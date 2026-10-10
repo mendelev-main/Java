@@ -6013,3 +6013,630 @@ Reflection — только один из способов использова�
 - [Java API — java.lang.reflect](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/reflect/package-summary.html) — Reflection API.
 
 **Далее:** 1.14. Классы в Java: nested, inner, local и anonymous classes — отличие static nested от inner, доступ к outer instance, захват effectively final variables и практические сценарии.
+
+---
+
+### 1.14. Nested, Inner, Local и Anonymous classes
+
+Java позволяет объявлять класс не только на верхнем уровне файла, но и **внутри другого класса или внутри блока кода**.
+
+Основные варианты:
+
+```text
+nested classes
+├── static nested class
+└── inner classes
+    ├── member inner class
+    ├── local class
+    └── anonymous class
+```
+
+Главный вопрос на собеседовании обычно не в названиях, а в понимании:
+
+> Есть ли у вложенного объекта неявная связь с экземпляром внешнего класса?
+
+Для **static nested class** — нет.  
+Для обычного **inner class** — да.
+
+> В исходном конспекте отдельного объяснения nested/inner/local/anonymous classes поиском не найдено. Есть только упоминание вложенных классов как части metadata класса в JVM. fileciteturn56file0 Поэтому языковые правила этого подраздела добавлены как Java Core база по JLS.
+
+#### Static nested class
+
+```java
+class Order {
+
+    private long id;
+
+    static class Validator {
+
+        boolean isValid(Order order) {
+            return order.id > 0;
+        }
+    }
+}
+```
+
+Создание:
+
+```java
+Order.Validator validator =
+        new Order.Validator();
+```
+
+Для создания `Validator` экземпляр `Order` не нужен.
+
+Упрощённо:
+
+```text
+Order
+└── static nested Validator
+
+validator ──X──► конкретный Order
+```
+
+Static nested class логически находится внутри `Order`, но его экземпляр **не хранит обязательную enclosing-instance связь** с конкретным объектом `Order`.
+
+#### Доступ static nested class к outer members
+
+Как и другой static context, он не может просто обратиться к instance member внешнего класса:
+
+```java
+class Order {
+
+    private long id;
+
+    static class Validator {
+
+        boolean isValid() {
+            // return id > 0; // compile error
+            return true;
+        }
+    }
+}
+```
+
+Нужен объект:
+
+```java
+boolean isValid(Order order) {
+    return order.id > 0;
+}
+```
+
+При этом nested class может обращаться к private members внешнего класса через обычные правила языка для nested declarations — `private` не означает, что два вложенных друг в друга типа полностью изолированы друг от друга.
+
+#### Member inner class
+
+Если вложенный class объявлен без `static`, это **inner class**:
+
+```java
+class Order {
+
+    private long id;
+
+    class Printer {
+
+        void print() {
+            System.out.println(id);
+        }
+    }
+}
+```
+
+Экземпляр `Printer` связан с конкретным экземпляром `Order`.
+
+Создание снаружи:
+
+```java
+Order order = new Order();
+
+Order.Printer printer =
+        order.new Printer();
+```
+
+Модель:
+
+```text
+order ───────────────► Order
+                         ▲
+                         │ enclosing instance
+                         │
+printer ─────────────► Printer
+```
+
+Поэтому внутри `Printer` доступно состояние конкретного outer object.
+
+#### `OuterClass.this`
+
+Если имена совпадают:
+
+```java
+class User {
+
+    private String name = "outer";
+
+    class Profile {
+
+        private String name = "inner";
+
+        void print() {
+            System.out.println(name);
+            System.out.println(User.this.name);
+        }
+    }
+}
+```
+
+```text
+name           → Profile.name
+User.this.name → поле конкретного outer User
+```
+
+`User.this` явно обращается к enclosing instance.
+
+#### Inner object может удерживать outer object
+
+Поскольку non-static inner instance связан с outer instance, эта связь влияет на lifetime объектов.
+
+Например, если где-то долго хранится inner object:
+
+```java
+someLongLivedCollection.add(
+        order.new Printer()
+);
+```
+
+он может косвенно удерживать `order` достижимым для GC.
+
+Это не означает, что inner classes «вызывают memory leak» сами по себе. Но неявную ссылку на enclosing instance важно учитывать в долгоживущих callbacks/listeners/tasks.
+
+Если связь с outer instance не нужна, **static nested class обычно проще и безопаснее по модели владения**.
+
+#### Может ли inner class иметь static members?
+
+Старое правило «inner class вообще не может содержать static members кроме constants» больше нельзя использовать как универсальное правило современной Java.
+
+В актуальных версиях Java inner classes могут объявлять static members в соответствии с современными правилами языка.
+
+На собеседовании важнее помнить фундаментальное отличие:
+
+```text
+static nested instance → не требует outer instance
+inner instance         → связан с enclosing outer instance
+```
+
+А не опираться на устаревшие ограничения старых версий Java.
+
+---
+
+#### Local class
+
+Класс можно объявить внутри метода или другого блока:
+
+```java
+class ReportService {
+
+    void generate(String title) {
+
+        class Formatter {
+
+            String format() {
+                return "Report: " + title;
+            }
+        }
+
+        Formatter formatter = new Formatter();
+        System.out.println(formatter.format());
+    }
+}
+```
+
+`Formatter` существует как declaration только внутри соответствующей области видимости.
+
+Снаружи метода написать:
+
+```java
+// new Formatter()
+```
+
+нельзя.
+
+Local classes полезны, когда небольшой вспомогательный тип нужен только внутри одного алгоритма и не должен становиться частью API класса.
+
+На практике используются значительно реже, чем обычные classes, lambdas и static nested classes.
+
+#### Захват local variables
+
+В примере local class использует:
+
+```java
+title
+```
+
+из enclosing method.
+
+Такая local variable должна быть `final` или **effectively final**:
+
+```java
+void generate() {
+
+    String prefix = "Report: ";
+
+    class Formatter {
+        String format(String value) {
+            return prefix + value;
+        }
+    }
+}
+```
+
+Допустимо, потому что `prefix` не переназначается.
+
+Но:
+
+```java
+String prefix = "Report: ";
+prefix = "Document: ";
+
+class Formatter {
+    String format(String value) {
+        // return prefix + value; // compile error
+    }
+}
+```
+
+После переназначения `prefix` перестал быть effectively final.
+
+Это связано с тем же правилом захвата local variables, которое мы уже встречали при обсуждении lambdas.
+
+#### Изменение объекта всё ещё возможно
+
+Как и раньше, effectively final относится к **самой переменной**, а не к глубокой неизменяемости объекта.
+
+```java
+List<String> values = new ArrayList<>();
+
+class Collector {
+    void add(String value) {
+        values.add(value);
+    }
+}
+```
+
+Это допустимо, пока:
+
+```java
+values = anotherList;
+```
+
+не переназначается.
+
+---
+
+#### Anonymous class
+
+**Anonymous class** — класс без собственного объявленного имени, экземпляр которого создаётся прямо в expression.
+
+```java
+Runnable task = new Runnable() {
+
+    @Override
+    public void run() {
+        System.out.println("Running");
+    }
+};
+```
+
+Здесь одновременно:
+
+1. создаётся anonymous subclass/implementation;
+2. определяется его body;
+3. создаётся экземпляр.
+
+Синтаксис выглядит как `new Runnable()`, но интерфейс напрямую не инстанцируется — создаётся объект анонимного класса, реализующего `Runnable`.
+
+#### Anonymous class от обычного класса
+
+Можно создать anonymous subclass:
+
+```java
+class Handler {
+    void handle() {
+        System.out.println("default");
+    }
+}
+```
+
+```java
+Handler handler = new Handler() {
+
+    @Override
+    void handle() {
+        System.out.println("custom");
+    }
+};
+```
+
+Это удобно для одноразового локального переопределения поведения.
+
+#### Anonymous class может иметь собственные members
+
+```java
+Runnable task = new Runnable() {
+
+    private int count;
+
+    private void log() {
+        System.out.println(count);
+    }
+
+    @Override
+    public void run() {
+        count++;
+        log();
+    }
+};
+```
+
+Но обращаться к специфическим members через переменную типа `Runnable` нельзя:
+
+```java
+task.run();
+// task.log(); // Runnable не знает о log()
+```
+
+Anonymous class имеет реальный runtime class, просто у него нет обычного source-level имени, которое мы объявили бы как `class MyTask`.
+
+#### Anonymous class и constructor
+
+У anonymous class нельзя объявить обычный именованный constructor — у класса нет собственного имени.
+
+Но можно использовать instance initializer:
+
+```java
+Runnable task = new Runnable() {
+
+    {
+        System.out.println("initialized");
+    }
+
+    @Override
+    public void run() {
+    }
+};
+```
+
+Если anonymous class наследуется от класса, аргументы в `new Parent(...)` передаются соответствующему superclass constructor.
+
+---
+
+#### Anonymous class vs lambda
+
+Для functional interface:
+
+```java
+Runnable task = new Runnable() {
+    @Override
+    public void run() {
+        System.out.println("run");
+    }
+};
+```
+
+часто можно написать:
+
+```java
+Runnable task =
+        () -> System.out.println("run");
+```
+
+Но lambda и anonymous class — **не одно и то же**.
+
+Ключевое различие — `this`.
+
+В anonymous class:
+
+```java
+Runnable task = new Runnable() {
+    @Override
+    public void run() {
+        System.out.println(this.getClass());
+    }
+};
+```
+
+`this` относится к экземпляру anonymous class.
+
+В lambda `this` не создаёт новый контекст объекта; если lambda находится в instance context, `this` относится к enclosing instance:
+
+```java
+class Service {
+
+    Runnable task() {
+        return () -> System.out.println(this);
+    }
+}
+```
+
+Здесь `this` — `Service`.
+
+Кроме того, anonymous class может:
+
+- иметь собственные fields/methods;
+- наследоваться от class;
+- реализовать interface через anonymous implementation.
+
+Lambda предназначена для реализации **functional interface** и имеет другую языковую семантику.
+
+Поэтому:
+
+> lambda — не просто сокращённая запись anonymous class, хотя во многих callback-сценариях заменяет её.
+
+#### Захват переменных anonymous class и lambda
+
+Обе конструкции могут захватывать local variables только если они final/effectively final:
+
+```java
+String message = "Hello";
+
+Runnable anonymous = new Runnable() {
+    @Override
+    public void run() {
+        System.out.println(message);
+    }
+};
+
+Runnable lambda =
+        () -> System.out.println(message);
+```
+
+Если потом сделать:
+
+```java
+// message = "Bye";
+```
+
+захват перестанет удовлетворять правилу effectively final.
+
+#### Когда какой вариант использовать?
+
+Если helper тесно связан с outer class, но не требует его экземпляра:
+
+```text
+static nested class
+```
+
+обычно хороший выбор.
+
+Если helper действительно должен работать с состоянием конкретного outer object:
+
+```text
+member inner class
+```
+
+может быть естественным.
+
+Если тип нужен только внутри одного блока:
+
+```text
+local class
+```
+
+Если нужна одноразовая реализация/подкласс с собственным body:
+
+```text
+anonymous class
+```
+
+Если нужен короткий callback для functional interface:
+
+```text
+lambda
+```
+
+обычно читается проще anonymous class.
+
+#### Практический пример: Builder
+
+Static nested class часто используется для Builder:
+
+```java
+class User {
+
+    private final String name;
+    private final int age;
+
+    private User(Builder builder) {
+        this.name = builder.name;
+        this.age = builder.age;
+    }
+
+    static class Builder {
+
+        private String name;
+        private int age;
+
+        Builder name(String name) {
+            this.name = name;
+            return this;
+        }
+
+        Builder age(int age) {
+            this.age = age;
+            return this;
+        }
+
+        User build() {
+            return new User(this);
+        }
+    }
+}
+```
+
+Использование:
+
+```java
+User user = new User.Builder()
+        .name("Alice")
+        .age(30)
+        .build();
+```
+
+Builder логически относится к `User`, но для своей работы ему не нужен уже существующий экземпляр `User`. Поэтому static nested class здесь подходит лучше inner class.
+
+#### Типичные ошибки
+
+**«Любой вложенный class называется inner class».**  
+Нет. Static nested class — nested, но не inner class. Inner classes связаны с enclosing instance.
+
+**«Чтобы создать static nested class, сначала нужен объект outer class».**  
+Нет. `new Outer.Nested()` не требует `new Outer()`.
+
+**«Inner class неявно независим от outer object».**  
+Нет. Member inner instance связан с конкретным enclosing instance.
+
+**«Effectively final означает immutable object».**  
+Нет. Ограничение относится к переназначению захваченной local variable.
+
+**«Lambda — просто синтаксический сахар для anonymous class».**  
+Это слишком грубо и приводит к ошибкам, например при понимании `this`. У них различная языковая семантика.
+
+**«Inner class всегда приводит к memory leak».**  
+Нет. Но ссылка inner instance на outer instance может продлить его достижимость, если inner object живёт дольше ожидаемого.
+
+#### Что важно запомнить
+
+- **Nested class** — общий термин для класса, объявленного внутри другого класса/interface.
+- **Static nested class** не требует экземпляр outer class.
+- **Inner class** связан с конкретным enclosing instance и может обращаться к его instance state.
+- `Outer.this` позволяет явно обратиться к enclosing instance.
+- Local class объявляется внутри блока и виден только в соответствующей scope.
+- Local и anonymous classes могут захватывать только final/effectively final local variables.
+- Anonymous class создаёт одноразовую реализацию/подкласс без source-level имени.
+- Lambda и anonymous class не эквивалентны; в частности, у них различается смысл `this`.
+- Если связь с outer instance не нужна, обычно стоит предпочесть static nested class.
+
+#### На собеседовании
+
+**Чем static nested class отличается от inner class?**
+
+> Static nested class не связан с конкретным экземпляром внешнего класса и создаётся как new Outer.Nested(). Member inner class имеет enclosing instance и снаружи создаётся через outer.new Inner(); поэтому он может напрямую работать с instance state этого outer object.
+
+**Почему local/anonymous class может использовать только final или effectively final local variables?**
+
+> Захватываемая local variable не должна переназначаться после инициализации. Это ограничение относится к самой переменной; mutable объект, на который она ссылается, всё ещё может изменяться.
+
+**Чем anonymous class отличается от lambda?**
+
+> Anonymous class создаёт экземпляр отдельного анонимного класса и может иметь собственные fields/methods; внутри него this относится к этому объекту. Lambda реализует functional interface и не вводит новый this-контекст: this относится к enclosing instance.
+
+#### Источники и уточнения
+
+- В найденном исходном конспекте отдельного объяснения nested/inner/local/anonymous classes нет; вложенные классы упоминаются только как часть metadata загруженного класса. fileciteturn56file0
+- Поэтому основной материал подраздела добавлен по спецификации Java как необходимая база Java Core.
+- [Java Language Specification — Nested Classes](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.1.3) — inner/static nested classes и enclosing instances.
+- [Java Language Specification — Local and Anonymous Classes](https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.3) — local class declarations.
+- [Java Language Specification — Class Instance Creation Expressions](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.9) — anonymous class creation.
+- [Java Language Specification — Lambda Expressions](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27) — lambda semantics и захват local variables.
+
+**Далее:** 1.15. Модификаторы доступа и packages — `private`, package-private, `protected`, `public`, доступ через наследование, package boundaries и типичные ловушки `protected`.
