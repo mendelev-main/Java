@@ -6640,3 +6640,607 @@ Builder логически относится к `User`, но для своей 
 - [Java Language Specification — Lambda Expressions](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27) — lambda semantics и захват local variables.
 
 **Далее:** 1.15. Модификаторы доступа и packages — `private`, package-private, `protected`, `public`, доступ через наследование, package boundaries и типичные ловушки `protected`.
+
+---
+
+### 1.15. Модификаторы доступа и packages
+
+Модификаторы доступа определяют, **из какого кода разрешено обращаться к типу или member**.
+
+Для members класса основные уровни:
+
+| Modifier | Тот же class | Тот же package | Subclass в другом package | Остальной код |
+| --- | --- | --- | --- | --- |
+| `private` | да | нет | нет | нет |
+| package-private | да | да | нет | нет |
+| `protected` | да | да | да, но с важным ограничением | нет |
+| `public` | да | да | да | да |
+
+Package-private — это **отсутствие явного access modifier**:
+
+```java
+class UserService {
+
+    void validate() {
+    }
+}
+```
+
+> В найденных разделах исходного конспекта нет отдельного объяснения access modifiers. Они встречаются в примерах и metadata классов (`public`, `private final`), а в JPA-разделе упоминается требование public/protected no-arg constructor для entity. fileciteturn60file0 fileciteturn60file8 Поэтому языковые правила ниже добавлены как необходимая Java Core база по JLS.
+
+#### `private`
+
+`private` — самый узкий доступ для member:
+
+```java
+class BankAccount {
+
+    private BigDecimal balance;
+
+    public BigDecimal getBalance() {
+        return balance;
+    }
+}
+```
+
+Код другого top-level class не может напрямую сделать:
+
+```java
+// account.balance
+```
+
+Это помогает скрывать детали реализации и защищать инварианты объекта.
+
+Но важно:
+
+> `private` сам по себе не делает класс хорошо инкапсулированным.
+
+Например, бессмысленный setter:
+
+```java
+public void setBalance(BigDecimal balance) {
+    this.balance = balance;
+}
+```
+
+может фактически открыть состояние почти так же широко. Инкапсуляция — это контроль допустимых операций, а не просто набор private fields.
+
+#### `public`
+
+`public` member доступен из любого кода, **если доступен сам тип**, которому он принадлежит.
+
+Например:
+
+```java
+package app.service;
+
+public class UserService {
+
+    public void createUser() {
+    }
+}
+```
+
+Из другого package:
+
+```java
+import app.service.UserService;
+
+UserService service = new UserService();
+service.createUser();
+```
+
+Но если enclosing/top-level type недоступен, наличие public member не делает его магически доступным снаружи.
+
+#### Package-private
+
+Если modifier отсутствует:
+
+```java
+class InternalValidator {
+
+    boolean isValid(String value) {
+        return value != null;
+    }
+}
+```
+
+и class, и method здесь package-private.
+
+Код из того же package может их использовать, а код из другого package — нет.
+
+Это удобно для внутренних деталей реализации package:
+
+```text
+com.example.payment
+├── PaymentService.java        public API
+├── PaymentRepository.java     package-private implementation detail
+└── PaymentValidator.java      package-private implementation detail
+```
+
+Не всё в приложении обязано быть `public`.
+
+#### Package — часть модели доступа
+
+Два класса в одном package получают package-level access независимо от того, лежат ли source-файлы физически рядом на диске.
+
+Например:
+
+```java
+package com.example.payment;
+```
+
+именно package declaration участвует в правилах языка.
+
+Package также создаёт namespace:
+
+```text
+com.shop.user.User
+com.shop.admin.User
+```
+
+Это разные fully qualified class names.
+
+#### Top-level types
+
+Для обычного top-level class/interface основные варианты доступа — `public` или package-private.
+
+```java
+public class ApiService {
+}
+```
+
+или:
+
+```java
+class InternalService {
+}
+```
+
+Так нельзя:
+
+```java
+// private class Service { }
+// protected class Service { }
+```
+
+на top level.
+
+`private` и `protected` применимы, например, к member classes внутри другого class.
+
+---
+
+#### `protected`: главное правило
+
+`protected` часто запоминают слишком упрощённо:
+
+> «доступно в package и наследникам».
+
+Это почти верно, но скрывает главную ловушку.
+
+В **том же package** protected member доступен примерно как package-level member:
+
+```java
+package a;
+
+public class Parent {
+    protected int value;
+}
+```
+
+```java
+package a;
+
+class Helper {
+
+    void test(Parent parent) {
+        parent.value = 10; // OK
+    }
+}
+```
+
+`Helper` даже не обязан быть subclass.
+
+#### Subclass в другом package
+
+Теперь:
+
+```java
+package a;
+
+public class Parent {
+    protected int value;
+}
+```
+
+Subclass:
+
+```java
+package b;
+
+import a.Parent;
+
+public class Child extends Parent {
+
+    void test() {
+        value = 10;       // OK
+        this.value = 20;  // OK
+    }
+}
+```
+
+Subclass получает protected access через **наследование**.
+
+Но отсюда не следует, что он может обращаться к protected member через любой объект `Parent`.
+
+#### Главная ловушка `protected`
+
+В другом package:
+
+```java
+package b;
+
+import a.Parent;
+
+public class Child extends Parent {
+
+    void test(Parent parent) {
+        // parent.value = 10; // compile error
+    }
+}
+```
+
+Почему?
+
+Потому что межпакетный protected access дан subclass в контексте его **наследуемой части**, а не как универсальное право читать protected member любого экземпляра superclass.
+
+Допустим:
+
+```java
+void test(Child child) {
+    child.value = 10; // OK
+}
+```
+
+Упрощённое правило для собеседования:
+
+> В другом package subclass может обращаться к protected instance member через `this`/унаследованный member или через reference, тип которой является этим subclass (или его subtype), но не через произвольную reference типа superclass.
+
+Это один из наиболее частых вопросов-ловушек по access modifiers.
+
+#### Пример с двумя subclasses
+
+```java
+package b;
+
+import a.Parent;
+
+class Child extends Parent {
+
+    void copy(Child other) {
+        this.value = other.value; // OK
+    }
+
+    void copy(Parent other) {
+        // this.value = other.value; // compile error
+    }
+}
+```
+
+Разница не в runtime object, а в правилах compile-time access через qualifying expression.
+
+#### `protected static`
+
+Для static protected members также действует special protected access между packages, но здесь нет instance state.
+
+На практике для понимания интервью важнее уверенно объяснять instance-case выше, потому что именно он обычно вызывает ошибки.
+
+---
+
+#### Access modifier и overriding
+
+При overriding нельзя **сузить** доступ метода.
+
+Например:
+
+```java
+class Parent {
+
+    protected void process() {
+    }
+}
+```
+
+Так можно:
+
+```java
+class Child extends Parent {
+
+    @Override
+    public void process() {
+    }
+}
+```
+
+Доступ расширился:
+
+```text
+protected → public
+```
+
+Но так нельзя:
+
+```java
+class Child extends Parent {
+
+    // compile error:
+    // @Override
+    // private void process() {}
+}
+```
+
+Иначе объект `Child` перестал бы удовлетворять доступному контракту `Parent`.
+
+#### Private method и overriding
+
+`private` method не наследуется subclass как доступный member, поэтому subclass не override его в обычном полиморфном смысле.
+
+```java
+class Parent {
+
+    private void print() {
+    }
+}
+
+class Child extends Parent {
+
+    void print() {
+    }
+}
+```
+
+`Child.print()` — новый method, а не override `Parent.print()`.
+
+Поэтому `@Override` здесь не скомпилируется.
+
+#### Package-private method и другой package
+
+Похожая ловушка:
+
+```java
+package a;
+
+public class Parent {
+
+    void process() {
+    }
+}
+```
+
+```java
+package b;
+
+public class Child extends Parent {
+
+    public void process() {
+    }
+}
+```
+
+`Parent.process()` недоступен subclass из другого package и не наследуется там как overridable member в требуемом смысле. Метод с тем же signature в `Child` не становится overriding этого package-private метода только из-за совпадения имени/signature.
+
+---
+
+#### Constructor access
+
+Access modifiers constructors определяют, **кто может создавать объект через этот constructor**.
+
+```java
+public class User {
+
+    private User() {
+    }
+}
+```
+
+Внешний код не может:
+
+```java
+// new User();
+```
+
+Это используется, например, в static factory methods:
+
+```java
+public class User {
+
+    private User() {
+    }
+
+    public static User create() {
+        return new User();
+    }
+}
+```
+
+`protected` constructor часто нужен, когда создание должно быть доступно наследникам/framework, но не произвольному клиентскому коду.
+
+В исходном JPA-разделе именно поэтому важно требование конструктора entity с подходящей visibility: там указано, что no-arg constructor должен быть `public` или `protected`. fileciteturn60file8 Точные требования JPA разберём отдельно в Hibernate/JPA.
+
+#### `private` constructor и наследование
+
+Если у superclass доступны только private constructors:
+
+```java
+class Parent {
+
+    private Parent() {
+    }
+}
+```
+
+обычный внешний subclass не сможет вызвать constructor superclass:
+
+```java
+// class Child extends Parent { } // compile error
+```
+
+Constructor не наследуется, но constructor subclass обязан в конечном счёте вызвать доступный superclass constructor.
+
+---
+
+#### Imports не меняют access
+
+```java
+import com.example.InternalService;
+```
+
+не делает package-private class доступным из другого package.
+
+`import` лишь позволяет использовать короткое имя вместо fully qualified name.
+
+То есть:
+
+```text
+import ≠ access permission
+```
+
+Сначала member/type должен быть доступен по правилам языка.
+
+#### Package и module — разные уровни
+
+Начиная с Java 9 существует JPMS — module system.
+
+Даже `public` class из package может быть недоступен коду другого module, если package не экспортируется module descriptor:
+
+```java
+module app.core {
+    exports com.example.api;
+}
+```
+
+Поэтому в modular application:
+
+```text
+public
+  +
+exported package
+  +
+module readability
+  =
+доступ между modules
+```
+
+Это дополнительный уровень поверх обычных access modifiers.
+
+Для большинства backend-собеседований достаточно сначала уверенно знать `private/package-private/protected/public`, а JPMS рассматривать как отдельный нюанс.
+
+#### Доступ и Reflection
+
+Access modifiers — правила языка/runtime access control, но Reflection API может предоставлять механизмы reflective access.
+
+Однако, как отмечалось в предыдущем разделе, нельзя считать:
+
+```java
+setAccessible(true)
+```
+
+универсальным способом обойти любую границу. JPMS и strong encapsulation могут ограничивать deep reflection.
+
+Это не меняет обычные compile-time правила access modifiers.
+
+---
+
+#### Что выбирать на практике?
+
+Полезный принцип:
+
+> Давайте минимально необходимую visibility.
+
+Если member нужен только самому class:
+
+```text
+private
+```
+
+Если implementation detail должен быть доступен соседним classes одного package:
+
+```text
+package-private
+```
+
+Если extension point действительно предназначен для subclasses:
+
+```text
+protected
+```
+
+Если это часть внешнего API:
+
+```text
+public
+```
+
+Не стоит делать всё `public` «на всякий случай»: публичный API сложнее менять без влияния на вызывающий код.
+
+#### Типичные ошибки
+
+**«Default access modifier — это protected».**  
+Нет. Отсутствие modifier означает package-private.
+
+**«protected доступен только наследникам».**  
+Нет. В том же package он доступен и не-subclass коду.
+
+**«Subclass из другого package может читать protected field у любого Parent».**  
+Нет. Для межпакетного protected instance access есть ограничение на qualifying reference.
+
+**«private method можно override».**  
+Нет. Method с тем же signature в subclass является другим method.
+
+**«import открывает доступ к package-private class».**  
+Нет. Import влияет на разрешение имён, а не на visibility.
+
+**«public всегда означает доступен отовсюду».**  
+Не полностью: должен быть доступен enclosing type, а в JPMS дополнительно имеют значение exports/readability.
+
+#### Что важно запомнить
+
+- `private` — доступ внутри соответствующего top-level/nest контекста по правилам языка; для обычного использования думай как о скрытом member реализации.
+- package-private — отсутствие modifier, доступ внутри package.
+- `protected` = package access + специальный доступ subclasses.
+- Между packages protected instance member нельзя использовать через произвольную reference типа superclass.
+- `public` — самый широкий language-level access, но type/module тоже должны быть доступны.
+- Top-level class обычно может быть `public` или package-private, но не `private/protected`.
+- При overriding можно сохранить или расширить visibility, но нельзя её сузить.
+- Private method не override-ится.
+- Import не меняет правила доступа.
+- Хороший API обычно использует **минимально необходимую visibility**.
+
+#### На собеседовании
+
+**Какие access modifiers есть в Java?**
+
+> Для members есть private, package-private, protected и public. Private ограничивает доступ, package-private доступен внутри package, protected добавляет возможность доступа наследникам, а public даёт самый широкий доступ. При этом protected между разными packages имеет дополнительное правило для доступа через экземпляр.
+
+**В чём ловушка protected между packages?**
+
+> Subclass из другого package получает protected member через наследование, но не может обращаться к нему через произвольную ссылку типа superclass. Например, внутри Child extends Parent выражение this.value допустимо, child.value для Child тоже допустимо, а parent.value через Parent reference — нет.
+
+**Можно ли при overriding сделать public method protected?**
+
+> Нет, overriding method не может сужать visibility inherited method. Можно сохранить уровень доступа или расширить его, например protected → public.
+
+**Чем package-private отличается от protected?**
+
+> Package-private доступен только внутри package. Protected внутри того же package тоже доступен, но дополнительно предоставляет специальный доступ subclasses из других packages.
+
+#### Источники и уточнения
+
+- В исходном конспекте access modifiers встречаются как часть metadata класса: упоминаются `public` class и `private final` fields, но отдельной теории visibility нет. fileciteturn60file0
+- В JPA-разделе исходник отдельно указывает public/protected no-arg constructor как требование entity. fileciteturn60file8
+- Поэтому правила package-private/protected, overriding visibility и package boundaries дополнены по JLS.
+- [Java Language Specification — Access Control](https://docs.oracle.com/javase/specs/jls/se26/html/jls-6.html#jls-6.6) — правила `public/protected/package/private`.
+- [Java Language Specification — Overriding](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.4.8.3) — требования к access при overriding.
+- [Java Language Specification — Packages](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html) — packages, imports и top-level declarations.
+
+**Далее:** 1.16. Object lifecycle и initialization order — default values, field initializers, static/instance initialization blocks, constructors, порядок superclass → subclass и вызов overridable methods из constructor.
