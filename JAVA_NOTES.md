@@ -5336,3 +5336,680 @@ record Money(
 - [Java Language Specification — Record Classes](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.10) — record components, constructors, members и ограничения.
 
 **Далее:** 1.13. Аннотации и Reflection — built-in annotations, meta-annotations, retention/target, чтение metadata через Reflection, `Class`, `Method`, `Field`, dynamic invocation и цена/ограничения reflection.
+
+---
+
+### 1.13. Аннотации и Reflection
+
+**Аннотация (annotation)** — metadata, которую можно прикрепить к элементу программы: классу, методу, полю, параметру и т. д.
+
+Сама по себе аннотация обычно **не выполняет действие**. Её смысл появляется, когда metadata читает компилятор, JVM, annotation processor или framework.
+
+```java
+@Override
+public String toString() {
+    return "User";
+}
+```
+
+**Reflection** — API, позволяющий во время выполнения исследовать структуру загруженных классов и выполнять некоторые операции динамически: получать методы/поля/constructors, читать runtime-аннотации, создавать объекты и вызывать методы.
+
+Связка выглядит так:
+
+```text
+annotation
+    │
+    │ metadata
+    ▼
+class file / runtime representation
+    │
+    ▼
+Reflection / framework
+    │
+    ▼
+решение на основе metadata
+```
+
+> Исходный конспект прямо связывает runtime-аннотации с reflection: metadata класса включает поля, методы, сигнатуры и аннотации, а аннотации с `Retention.RUNTIME` доступны через reflection. fileciteturn52file7 Также исходник показывает практическое использование аннотаций в Spring DI, lifecycle и AOP. fileciteturn52file0 fileciteturn52file3
+
+#### Встроенные аннотации Java
+
+Одна из самых известных:
+
+```java
+@Override
+```
+
+Она говорит компилятору, что метод должен переопределять/реализовывать метод supertype:
+
+```java
+class User {
+
+    @Override
+    public String toString() {
+        return "User";
+    }
+}
+```
+
+Если ошибиться в сигнатуре, компилятор обнаружит проблему.
+
+```@Deprecated`` помечает API как устаревший:
+
+```java
+@Deprecated
+void oldMethod() {
+}
+```
+
+```@SuppressWarnings`` подавляет выбранные compiler warnings:
+
+```java
+@SuppressWarnings("unchecked")
+void legacyCode() {
+    // ...
+}
+```
+
+Её стоит применять локально и осознанно, а не скрывать предупреждения на большом участке кода без понимания причины.
+
+```@FunctionalInterface`` сообщает, что interface должен оставаться functional interface:
+
+```java
+@FunctionalInterface
+interface Converter<T, R> {
+    R convert(T value);
+}
+```
+
+Это полезная compile-time проверка контракта.
+
+#### Собственная annotation
+
+```java
+@interface Audited {
+}
+```
+
+Использование:
+
+```java
+@Audited
+class PaymentService {
+}
+```
+
+Но для реального применения обычно нужно указать, **где** annotation допустима и **как долго** она существует.
+
+Для этого используются meta-annotations.
+
+#### `@Target`
+
+`@Target` ограничивает элементы программы, на которых можно использовать annotation.
+
+```java
+@Target(ElementType.METHOD)
+@interface Audited {
+}
+```
+
+Теперь:
+
+```java
+class PaymentService {
+
+    @Audited
+    void pay() {
+    }
+}
+```
+
+допустимо, а применение к классу — нет.
+
+Часто используемые `ElementType`:
+
+```text
+TYPE             → class/interface/enum/record
+METHOD           → метод
+FIELD            → поле
+PARAMETER        → параметр
+CONSTRUCTOR      → constructor
+LOCAL_VARIABLE   → local variable
+ANNOTATION_TYPE  → другая annotation declaration
+TYPE_USE         → использование типа
+RECORD_COMPONENT → record component
+```
+
+Можно разрешить несколько targets:
+
+```java
+@Target({
+        ElementType.TYPE,
+        ElementType.METHOD
+})
+@interface Audited {
+}
+```
+
+#### `@Retention`
+
+`@Retention` определяет, до какого этапа сохраняется annotation.
+
+```java
+@Retention(RetentionPolicy.RUNTIME)
+@interface Audited {
+}
+```
+
+Три политики:
+
+| Retention | Смысл |
+| --- | --- |
+| `SOURCE` | annotation существует только в source и не сохраняется в class file |
+| `CLASS` | сохраняется в class file, но не обязана быть доступна через обычный reflection во время выполнения |
+| `RUNTIME` | сохраняется и доступна runtime через Reflection API |
+
+Если annotation должна читаться framework во время работы приложения:
+
+```java
+clazz.isAnnotationPresent(Audited.class)
+```
+
+обычно нужна:
+
+```java
+@Retention(RetentionPolicy.RUNTIME)
+```
+
+Это ровно тот случай, который отдельно упоминает исходный конспект. fileciteturn52file7
+
+#### `@Documented`
+
+```java
+@Documented
+@interface Audited {
+}
+```
+
+Указывает, что использование annotation должно включаться инструментами вроде Javadoc в документируемый API.
+
+Это не меняет бизнес-поведение программы.
+
+#### `@Inherited`
+
+```java
+@Inherited
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.TYPE)
+@interface Audited {
+}
+```
+
+Если annotation стоит на superclass:
+
+```java
+@Audited
+class Parent {
+}
+
+class Child extends Parent {
+}
+```
+
+то определённые reflection-операции над `Child` могут видеть inherited annotation.
+
+Важная ловушка: `@Inherited` относится к **class inheritance**. Она не означает автоматическое наследование annotation с методов, полей или interfaces.
+
+#### Annotation может иметь параметры
+
+```java
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.METHOD)
+@interface Retry {
+
+    int attempts() default 3;
+
+    String reason() default "";
+}
+```
+
+Использование:
+
+```java
+@Retry(attempts = 5, reason = "remote API")
+void sendRequest() {
+}
+```
+
+Если элемент называется `value`, имя можно опустить:
+
+```java
+@interface Role {
+    String value();
+}
+
+@Role("ADMIN")
+class AdminService {
+}
+```
+
+#### Annotation — metadata, а не «магический вызов»
+
+Рассмотрим:
+
+```java
+@Audited
+void pay() {
+}
+```
+
+Java сама по себе не начинает логировать вызов только потому, что мы написали `@Audited`.
+
+Нужен механизм, который:
+
+1. обнаружит annotation;
+2. прочитает metadata;
+3. выполнит соответствующую логику.
+
+Например, framework может просканировать методы и построить proxy/interceptor.
+
+Исходный конспект показывает этот подход в Spring AOP: pointcut может матчить методы по annotation, а proxy добавляет advice вокруг вызова. fileciteturn52file3
+
+---
+
+#### Что такое Reflection
+
+Базовая точка входа — объект `Class<?>`.
+
+Получить его можно несколькими способами:
+
+```java
+Class<User> first = User.class;
+
+User user = new User();
+Class<?> second = user.getClass();
+
+Class<?> third = Class.forName("com.example.User");
+```
+
+`Class` содержит runtime-представление типа и позволяет исследовать его metadata.
+
+Например:
+
+```java
+System.out.println(first.getName());
+System.out.println(first.getSuperclass());
+System.out.println(Arrays.toString(first.getInterfaces()));
+```
+
+#### Получение методов
+
+```java
+Method method =
+        User.class.getDeclaredMethod("setName", String.class);
+```
+
+`getDeclaredMethod()` ищет method, объявленный непосредственно в данном class/interface, включая non-public members.
+
+```java
+getMethod(...)
+```
+
+работает с public method и учитывает соответствующее наследование public members.
+
+Аналогичная идея есть у:
+
+```java
+getDeclaredMethods()
+getMethods()
+```
+
+Это частая ловушка: `declared` не означает «все методы объекта вместе с inherited».
+
+#### Динамический вызов метода
+
+```java
+User user = new User();
+
+Method method =
+        User.class.getDeclaredMethod(
+                "setName",
+                String.class
+        );
+
+method.invoke(user, "Alice");
+```
+
+Здесь compiler не делает обычный статически типизированный вызов:
+
+```java
+user.setName("Alice");
+```
+
+Метод выбирается через runtime metadata.
+
+`Method.invoke()` также оборачивает исключение, выброшенное самим вызываемым методом, в `InvocationTargetException`, поэтому reflection-код требует отдельной обработки ошибок.
+
+#### Работа с fields
+
+```java
+Field field =
+        User.class.getDeclaredField("name");
+```
+
+Можно исследовать:
+
+```java
+field.getName();
+field.getType();
+field.getModifiers();
+field.getAnnotations();
+```
+
+И при наличии доступа — читать/изменять значение через reflection API.
+
+Но сам факт наличия Reflection API **не означает**, что любой private member всегда можно беспрепятственно открыть. На доступ влияют Java access control, module boundaries и правила конкретной версии/runtime configuration.
+
+#### Constructors
+
+```java
+Constructor<User> constructor =
+        User.class.getDeclaredConstructor(String.class);
+
+User user = constructor.newInstance("Alice");
+```
+
+Так framework может создавать экземпляры, когда конкретный class известен только во время выполнения.
+
+Это одна из причин, почему reflection исторически широко применялся в DI containers, serializers и ORM.
+
+#### Чтение annotation через reflection
+
+Создадим runtime annotation:
+
+```java
+@Retention(RetentionPolicy.RUNTIME)
+@Target(ElementType.METHOD)
+@interface Audited {
+    String value() default "";
+}
+```
+
+Используем:
+
+```java
+class PaymentService {
+
+    @Audited("payment")
+    public void pay() {
+    }
+}
+```
+
+Читаем:
+
+```java
+Method method =
+        PaymentService.class.getDeclaredMethod("pay");
+
+Audited audited =
+        method.getAnnotation(Audited.class);
+
+if (audited != null) {
+    System.out.println(audited.value());
+}
+```
+
+Упрощённо framework делает похожую концептуальную работу:
+
+```text
+Class
+  │
+  ├── methods
+  │     │
+  │     └── @Audited
+  │            │
+  ▼            ▼
+scan metadata → build configuration/proxy/handler
+```
+
+Реальные frameworks могут использовать не только core Reflection API, но и bytecode generation, indexes, annotation processors, method handles, generated code и собственные metadata abstractions.
+
+#### Пример: мини-обработчик annotation
+
+```java
+static void invokeAuditedMethods(Object target)
+        throws Exception {
+
+    for (Method method
+            : target.getClass().getDeclaredMethods()) {
+
+        if (method.isAnnotationPresent(Audited.class)) {
+            System.out.println(
+                    "Before: " + method.getName()
+            );
+
+            method.invoke(target);
+        }
+    }
+}
+```
+
+Это сильно упрощённый пример, но он показывает ключевую идею:
+
+```text
+annotation описывает
+       +
+reflection обнаруживает
+       +
+код интерпретирует
+       =
+динамическое поведение
+```
+
+#### Как это связано со Spring
+
+В исходном конспекте Spring использует большое количество declarative metadata:
+
+```java
+@Component
+@Autowired
+@Configuration
+@Bean
+@Transactional
+@Cacheable
+@Async
+```
+
+Например, исходник описывает `@Autowired` как способ автоматического внедрения зависимости контейнером. fileciteturn52file6
+
+Но важно не свести весь Spring к фразе:
+
+> «Spring работает на reflection».
+
+Это слишком грубо.
+
+Spring использует совокупность механизмов: metadata scanning, Reflection API, BeanDefinition, post-processors, proxies, generated bytecode и другие средства в зависимости от конкретной функции.
+
+Например, исходный материал отдельно описывает создание `BeanDefinition`, работу `BeanFactoryPostProcessor`, создание beans и последующий `BeanPostProcessor`. fileciteturn52file2
+
+А транзакции, caching и некоторые другие cross-cutting функции в Spring часто реализуются через proxy-based AOP. fileciteturn52file3
+
+#### Reflection и Hibernate/JPA
+
+ORM должен понимать структуру entity:
+
+```java
+@Entity
+class User {
+
+    @Id
+    private Long id;
+
+    @Column(name = "user_name")
+    private String name;
+}
+```
+
+Framework обрабатывает mapping metadata, чтобы связать Java-модель с таблицами/колонками.
+
+Reflection — один из механизмов, позволяющих динамически исследовать members и metadata, но конкретный ORM может также применять bytecode enhancement, generated accessors/proxies и другие оптимизации.
+
+Подробно это будет разобрано в Hibernate/JPA.
+
+#### Цена Reflection
+
+Обычный вызов:
+
+```java
+service.process();
+```
+
+проще для статического анализа и оптимизаций, чем динамическая схема:
+
+```java
+method.invoke(service);
+```
+
+Reflection добавляет:
+
+- динамическое разрешение metadata и дополнительные проверки;
+- более сложную обработку ошибок;
+- меньшую compile-time type safety;
+- более сложный рефакторинг и навигацию;
+- возможные ограничения доступа/modules;
+- потенциальный performance overhead относительно обычного прямого вызова.
+
+Но фраза:
+
+> «Reflection всегда очень медленный»
+
+слишком абсолютна.
+
+Стоимость зависит от операции, JVM, частоты вызовов и архитектуры. Framework обычно сканирует metadata ограниченное число раз, кэширует результаты или генерирует более быстрые пути доступа.
+
+Практический вывод:
+
+> Не стоит заменять обычный типобезопасный Java-код reflection без причины, но для framework/infrastructure задач динамичность reflection оправдана.
+
+#### Reflection ломает инкапсуляцию?
+
+Reflection способен работать с non-public metadata и в некоторых разрешённых условиях получать доступ к non-public members.
+
+Но современная Java имеет дополнительные границы, особенно **Java Platform Module System (JPMS)**.
+
+Поэтому старый совет:
+
+```java
+field.setAccessible(true);
+```
+
+не следует понимать как универсальное «теперь можно получить доступ ко всему». Strong encapsulation и module openness могут ограничить reflective access.
+
+#### Reflection и compile-time type safety
+
+Обычный код:
+
+```java
+user.setName("Alice");
+```
+
+компилятор проверяет заранее.
+
+Reflection:
+
+```java
+method.invoke(user, 123);
+```
+
+может обнаружить несовместимость только во время выполнения.
+
+Поэтому reflection переносит часть ошибок из compile time в runtime.
+
+#### Аннотации не обязательно обрабатываются runtime
+
+Важно не связывать annotations исключительно с reflection.
+
+Например, annotation может иметь:
+
+```java
+@Retention(RetentionPolicy.SOURCE)
+```
+
+и использоваться compiler/tooling.
+
+Другой вариант — **annotation processing** во время компиляции: processor читает annotations и генерирует код/metadata.
+
+Следовательно:
+
+```text
+annotations
+├── compiler checks
+├── compile-time processors
+├── tooling/documentation
+└── runtime frameworks / reflection
+```
+
+Reflection — только один из способов использования annotation metadata.
+
+#### Типичные ошибки
+
+**«Аннотация сама выполняет код».**  
+Нет. Annotation — metadata. Нужен компилятор, processor, runtime/framework или другой механизм, который её интерпретирует.
+
+**«Все annotations доступны через reflection».**  
+Нет. Для обычного runtime reflection важна retention policy; `SOURCE` и `CLASS` не эквивалентны `RUNTIME`.
+
+**«@Inherited наследует annotation везде».**  
+Нет. Её семантика относится к annotations на class declarations и наследованию классов, а не автоматически к methods/interfaces.
+
+**«getDeclaredMethods() возвращает вообще все методы, включая inherited».**  
+Нет. Он ориентирован на methods, объявленные непосредственно в данном типе.
+
+**«setAccessible(true) гарантированно открывает любой private member».**  
+Нет. В современной Java reflective access может быть ограничен module boundaries и strong encapsulation.
+
+**«Spring = reflection».**  
+Нет. Reflection важен для многих infrastructure-сценариев, но Spring также использует metadata models, processors, proxies и другие механизмы.
+
+#### Что важно запомнить
+
+- Annotation — **metadata**, а не исполняемое действие само по себе.
+- `@Target` определяет допустимые места применения.
+- `@Retention` определяет жизненный цикл annotation: `SOURCE`, `CLASS`, `RUNTIME`.
+- Runtime annotation можно читать через Reflection API.
+- `Class` — основная точка входа для runtime metadata типа.
+- `Method`, `Field`, `Constructor` позволяют исследовать соответствующие members.
+- `Method.invoke()` выполняет динамический вызов и теряет часть compile-time type safety.
+- Reflection полезен для frameworks, DI, ORM, serialization и infrastructure-кода.
+- Reflection не гарантирует обход всех access/module restrictions.
+- Не все annotations обрабатываются reflection: возможна compile-time processing.
+
+#### На собеседовании
+
+**Что такое annotation в Java?**
+
+> Annotation — это metadata, которую можно прикрепить к классу, методу, полю и другим элементам. Сама annotation обычно ничего не выполняет: её читает компилятор, annotation processor или runtime-framework. @Target ограничивает место применения, а @Retention определяет, сохраняется ли annotation только в source, в class file или доступна runtime.
+
+**Что такое Reflection?**
+
+> Reflection API позволяет во время выполнения исследовать структуру загруженного типа через Class: получать методы, поля, constructors и runtime-аннотации, а также динамически создавать объекты или вызывать методы. Это полезно для framework-кода, но уменьшает compile-time type safety и может иметь дополнительные накладные расходы и ограничения доступа.
+
+**Чем `getMethods()` отличается от `getDeclaredMethods()`?**
+
+> getMethods() возвращает public methods с учётом унаследованных public methods. getDeclaredMethods() возвращает methods, непосредственно объявленные в данном class/interface, независимо от их visibility, но не является способом получить всю inherited hierarchy.
+
+**Как Spring использует annotations и reflection?**
+
+> Spring читает declarative metadata вроде @Component или @Autowired и на её основе строит конфигурацию контейнера. Reflection участвует в части динамического анализа и доступа, но Spring не сводится к reflection: используются BeanDefinition, post-processors, proxies, bytecode generation и другие механизмы.
+
+#### Источники и уточнения
+
+- Исходный конспект прямо указывает, что metadata класса включает поля, методы, сигнатуры и annotations, а `Retention.RUNTIME` делает annotation доступной через reflection. fileciteturn52file7
+- В Spring-разделе исходника annotations используются для DI и lifecycle, например `@Autowired`, `@PostConstruct` и `@PreDestroy`. fileciteturn52file0
+- В AOP-разделе исходника показано использование annotation metadata в pointcuts и proxy-based механика `@Transactional`, `@Async`, caching и security. fileciteturn52file3
+- [Java Language Specification — Annotations](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.6) — annotation interfaces и правила annotations.
+- [Java API — java.lang.annotation](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/annotation/package-summary.html) — meta-annotations и retention/target.
+- [Java API — java.lang.reflect](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/reflect/package-summary.html) — Reflection API.
+
+**Далее:** 1.14. Классы в Java: nested, inner, local и anonymous classes — отличие static nested от inner, доступ к outer instance, захват effectively final variables и практические сценарии.
