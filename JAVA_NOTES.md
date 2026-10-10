@@ -1827,3 +1827,445 @@ Integer.valueOf("42")   // возвращает Integer
 - [Integer API](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Integer.html) — `valueOf`, `parseInt`, константы и API `Integer`.
 
 **Далее:** 1.7. Передача параметров и операторы Java — pass-by-value, ссылки как значения, `==`, short-circuit operators и особенности вычисления выражений.
+
+---
+
+### 1.7. Передача параметров и операторы Java
+
+Один из самых частых вопросов по Java Core:
+
+> Java передаёт параметры **по значению (pass-by-value)** или **по ссылке (pass-by-reference)**?
+
+Правильный ответ: **Java всегда использует pass-by-value**.
+
+Путаница возникает потому, что для reference types значением переменной является **ссылка на объект**. При вызове метода копируется эта ссылка.
+
+> В найденных разделах исходного конспекта отдельного материала по pass-by-value и базовым операторам нет. Этот подраздел добавлен как необходимая база Java Core по правилам Java Language Specification.
+
+#### Передача primitive
+
+Простой пример:
+
+```java
+static void change(int value) {
+    value = 100;
+}
+
+public static void main(String[] args) {
+    int number = 10;
+
+    change(number);
+
+    System.out.println(number); // 10
+}
+```
+
+Метод получает **копию значения** `10`:
+
+```text
+main()                  change()
+
+number = 10   ─────►    value = 10
+   │                       │
+   │                       ▼
+   │                   value = 100
+   │
+   ▼
+number = 10
+```
+
+Изменение параметра `value` никак не меняет переменную `number` вызывающего метода.
+
+#### Что происходит с объектом?
+
+Рассмотрим reference type:
+
+```java
+class User {
+    String name;
+
+    User(String name) {
+        this.name = name;
+    }
+}
+
+static void rename(User user) {
+    user.name = "Bob";
+}
+
+public static void main(String[] args) {
+    User user = new User("Alice");
+
+    rename(user);
+
+    System.out.println(user.name); // Bob
+}
+```
+
+На первый взгляд кажется, что объект передали «по ссылке». Но на самом деле метод получил **копию ссылочного значения**.
+
+Упрощённо:
+
+```text
+main()                         rename()
+
+user ──────┐              copyOfReference
+           │                     │
+           └────────┬────────────┘
+                    ▼
+              ┌───────────┐
+              │ User      │
+              │ name=Alice│
+              └───────────┘
+                    │
+                    ▼
+              name = Bob
+```
+
+Обе ссылки указывают на **один объект**, поэтому через локальную копию ссылки метод может изменить состояние этого объекта.
+
+Но саму переменную вызывающего метода он заменить не может.
+
+#### Переприсваивание параметра не меняет исходную ссылку
+
+```java
+static void replace(User user) {
+    user = new User("Bob");
+}
+
+public static void main(String[] args) {
+    User user = new User("Alice");
+
+    replace(user);
+
+    System.out.println(user.name); // Alice
+}
+```
+
+После входа в `replace()` существуют две независимые переменные, содержащие одинаковое ссылочное значение.
+
+После переприсваивания:
+
+```text
+main()                         replace()
+
+user ───────────────► [User: Alice]
+
+                         user ─► [User: Bob]
+```
+
+Изменился только локальный параметр `user` внутри `replace()`.
+
+Отсюда удобная формула:
+
+> Java передаёт **копию значения переменной**. Для primitive это копия primitive value, для reference type — копия reference value.
+
+#### Почему Java — не pass-by-reference?
+
+При настоящем pass-by-reference вызываемый метод мог бы заменить саму переменную вызывающего кода.
+
+Например, такой `swap()` в Java не работает:
+
+```java
+static void swap(User first, User second) {
+    User temp = first;
+    first = second;
+    second = temp;
+}
+```
+
+```java
+User a = new User("Alice");
+User b = new User("Bob");
+
+swap(a, b);
+
+System.out.println(a.name); // Alice
+System.out.println(b.name); // Bob
+```
+
+Метод переставил только **свои копии ссылок**.
+
+Это хороший способ доказать на собеседовании, что Java не использует pass-by-reference.
+
+#### `==`: что именно сравнивается?
+
+Оператор `==` зависит от типов operands.
+
+Для primitives сравниваются значения:
+
+```java
+int a = 10;
+int b = 10;
+
+System.out.println(a == b); // true
+```
+
+Для references сравнивается identity ссылок — указывают ли они на один объект:
+
+```java
+User a = new User("Alice");
+User b = new User("Alice");
+User c = a;
+
+System.out.println(a == b); // false
+System.out.println(a == c); // true
+```
+
+Содержимое объектов обычно сравнивают через `equals()`, если класс реализует нужную value semantics.
+
+```text
+== для primitives  → значение
+== для references  → один ли объект
+equals()            → логическое равенство по контракту класса
+```
+
+Подробно контракт `equals()/hashCode()` разберём в отдельной главе.
+
+#### Short-circuit operators: `&&` и `||`
+
+Операторы **conditional AND** `&&` и **conditional OR** `||` вычисляют правую часть только тогда, когда она действительно нужна.
+
+```java
+if (user != null && user.isActive()) {
+    // ...
+}
+```
+
+Если `user == null`, первая часть уже равна `false`. Всё выражение `&&` не может стать `true`, поэтому:
+
+```java
+user.isActive()
+```
+
+не вызывается.
+
+Именно поэтому такая null-check конструкция безопасна.
+
+Для `||` логика обратная:
+
+```java
+if (cached != null || loadFromDatabase()) {
+    // ...
+}
+```
+
+Если `cached != null` уже даёт `true`, правую часть вычислять не требуется.
+
+#### `&` и `|` — это не то же самое
+
+Для boolean operands можно использовать и `&`, `|`, но они **вычисляют обе стороны**:
+
+```java
+boolean result = false & expensiveCheck();
+```
+
+`expensiveCheck()` будет вызван.
+
+А здесь:
+
+```java
+boolean result = false && expensiveCheck();
+```
+
+не будет.
+
+Кроме того, `&`, `|` и `^` используются как **bitwise operators** для integer types:
+
+```java
+int flags = 0b0101;
+int mask  = 0b0001;
+
+System.out.println(flags & mask); // 1
+```
+
+Для обычных логических условий чаще нужны `&&` и `||`.
+
+#### Побочные эффекты и short-circuit
+
+Short-circuit влияет не только на производительность, но и на поведение программы:
+
+```java
+int x = 0;
+
+boolean result = true || ++x > 0;
+
+System.out.println(x); // 0
+```
+
+Правая часть не вычислилась, поэтому `x` не изменился.
+
+Код, который критически зависит от побочного эффекта внутри сложного boolean expression, обычно труднее читать. Лучше не прятать важные изменения состояния в условиях без необходимости.
+
+#### Порядок вычисления operands
+
+В Java operands выражений вычисляются **слева направо**.
+
+```java
+static int print(int value) {
+    System.out.println(value);
+    return value;
+}
+
+int result = print(1) + print(2);
+```
+
+Сначала будет вызван `print(1)`, затем `print(2)`.
+
+Это отличается от **приоритета операторов**. Приоритет определяет структуру выражения:
+
+```java
+int result = 2 + 3 * 4; // 14
+```
+
+Сначала по структуре выполняется умножение:
+
+```text
+2 + (3 * 4)
+```
+
+Если выражение сложно читать, лучше использовать скобки, даже если приоритет операторов известен.
+
+#### `++i` и `i++`
+
+Оба оператора увеличивают переменную на единицу, но значение самого выражения различается.
+
+**Prefix increment:**
+
+```java
+int i = 5;
+int x = ++i;
+
+System.out.println(i); // 6
+System.out.println(x); // 6
+```
+
+Сначала increment, затем используется новое значение.
+
+**Postfix increment:**
+
+```java
+int i = 5;
+int x = i++;
+
+System.out.println(i); // 6
+System.out.println(x); // 5
+```
+
+В выражении используется старое значение, а переменная увеличивается.
+
+Не стоит писать головоломки вроде:
+
+```java
+int x = i++ + ++i;
+```
+
+Язык определяет порядок вычисления, но такой код плохо читается и легко приводит к ошибкам.
+
+#### Тернарный оператор
+
+Conditional operator:
+
+```java
+condition ? valueIfTrue : valueIfFalse
+```
+
+Пример:
+
+```java
+String status = age >= 18 ? "adult" : "minor";
+```
+
+Выполняется только одна из двух ветвей — выбранная по условию.
+
+Тернарный оператор удобен для короткого выбора **значения**, но глубокая вложенность быстро ухудшает читаемость:
+
+```java
+String result = a ? "A" : b ? "B" : c ? "C" : "D";
+```
+
+В таких случаях обычный `if/else` часто понятнее.
+
+#### Оператор `instanceof`
+
+`instanceof` проверяет, совместим ли объект с указанным reference type:
+
+```java
+if (value instanceof String) {
+    String text = (String) value;
+}
+```
+
+Современная Java поддерживает pattern matching:
+
+```java
+if (value instanceof String text) {
+    System.out.println(text.length());
+}
+```
+
+Здесь проверка типа и получение переменной `text` объединены.
+
+Для `null`:
+
+```java
+Object value = null;
+
+System.out.println(value instanceof String); // false
+```
+
+`instanceof` не выбрасывает `NullPointerException` для `null`.
+
+#### Типичные ошибки
+
+**«Объекты в Java передаются по ссылке».**  
+Нет. Передаётся копия значения ссылки.
+
+**«Если метод изменил объект, значит это pass-by-reference».**  
+Нет. Две независимые reference-переменные могут указывать на один mutable object.
+
+**«`==` сравнивает объекты по содержимому».**  
+Для references `==` проверяет identity. Логическое равенство обычно реализуется через `equals()`.
+
+**«`&` и `&&` отличаются только написанием».**  
+Нет. Для boolean `&&` short-circuit, а `&` вычисляет обе стороны; кроме того, `&` работает как bitwise operator для integer types.
+
+#### Что важно запомнить
+
+- Java **всегда pass-by-value**.
+- Для primitive копируется primitive value; для объекта копируется **reference value**.
+- Через копию ссылки можно изменить mutable object, но нельзя переприсвоить переменную вызывающего метода.
+- `==` сравнивает primitive values или identity references.
+- `&&` и `||` используют short-circuit evaluation.
+- `&` и `|` для boolean вычисляют обе стороны; для integer types выполняют bitwise operations.
+- Java вычисляет operands слева направо.
+- `++i` возвращает новое значение, `i++` — старое значение выражения.
+- Pattern matching для `instanceof` позволяет одновременно проверить тип и получить типизированную переменную.
+
+#### На собеседовании
+
+**Java — pass-by-value или pass-by-reference?**
+
+> Java всегда pass-by-value. При передаче primitive копируется само значение. При передаче объекта копируется значение ссылки на этот объект. Поэтому метод может через эту копию изменить состояние общего объекта, но переприсваивание параметра внутри метода не изменит ссылочную переменную вызывающего кода.
+
+**Почему изменение поля объекта внутри метода видно снаружи?**
+
+> Потому что исходная переменная и параметр метода содержат две копии одной и той же ссылки и указывают на один объект. Изменяется сам объект, а не ссылочная переменная вызывающего метода.
+
+**Чем `&&` отличается от `&` для boolean?**
+
+> `&&` использует short-circuit: если результат уже известен по левой части, правая не вычисляется. `&` вычисляет обе части всегда. Поэтому проверка `obj != null && obj.isValid()` безопасна, а с одиночным `&` вызов справа всё равно произошёл бы.
+
+**Чем `==` отличается от `equals()`?**
+
+> Для primitive `==` сравнивает значения, а для references — указывают ли ссылки на один объект. `equals()` — метод, через который класс может определить логическое равенство объектов по содержимому. Его контракт подробно рассматривается отдельно.
+
+#### Источники и уточнения
+
+- В найденных разделах пользовательского конспекта отдельного материала по pass-by-value и базовым операторам не обнаружено; подраздел добавлен как необходимая база Java Core.
+- [Java Language Specification — Variables](https://docs.oracle.com/javase/specs/jls/se26/html/jls-4.html#jls-4.12) — значения переменных и параметры.
+- [Java Language Specification — Method Invocation Expressions](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12) — вычисление аргументов и передача значений при вызове.
+- [Java Language Specification — Evaluation Order](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.7) — порядок вычисления.
+- [Java Language Specification — Conditional-And / Conditional-Or](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.23) — short-circuit operators.
+
+**Далее:** 1.8. ООП в Java — инкапсуляция, наследование, полиморфизм, абстракция, composition over inheritance и динамический dispatch.
