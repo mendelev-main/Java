@@ -2269,3 +2269,507 @@ System.out.println(value instanceof String); // false
 - [Java Language Specification — Conditional-And / Conditional-Or](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.23) — short-circuit operators.
 
 **Далее:** 1.8. ООП в Java — инкапсуляция, наследование, полиморфизм, абстракция, composition over inheritance и динамический dispatch.
+
+---
+
+### 1.8. ООП в Java: инкапсуляция, наследование, полиморфизм и абстракция
+
+**Объектно-ориентированное программирование (ООП)** — подход, при котором программа строится вокруг объектов, объединяющих **состояние** и **поведение**.
+
+В Java класс описывает структуру и поведение, а объект — конкретный экземпляр класса:
+
+```java
+class BankAccount {
+    private long balance;
+
+    void deposit(long amount) {
+        balance += amount;
+    }
+
+    long getBalance() {
+        return balance;
+    }
+}
+
+BankAccount account = new BankAccount();
+```
+
+Четыре классических понятия, которые обычно ожидают услышать на собеседовании:
+
+```text
+OOP
+├── Encapsulation
+├── Inheritance
+├── Polymorphism
+└── Abstraction
+```
+
+> В исходном конспекте ООП встречается через темы наследования JPA, SOLID и полиморфизма, но отдельного цельного раздела с четырьмя базовыми принципами в найденном материале нет. Поэтому базовое объяснение ниже дополнено как необходимая часть Java Core. Связь наследования с Liskov Substitution Principle поддерживается исходным материалом и будет подробно разобрана в главе SOLID.
+
+#### Инкапсуляция
+
+**Инкапсуляция (encapsulation)** — объединение состояния и поведения объекта и контроль доступа к внутренним деталям.
+
+Плохой вариант:
+
+```java
+class BankAccount {
+    public long balance;
+}
+```
+
+Любой код может сделать:
+
+```java
+account.balance = -1_000_000;
+```
+
+Класс не контролирует собственное состояние.
+
+Лучше скрыть детали и предоставить операции, сохраняющие инварианты:
+
+```java
+class BankAccount {
+    private long balance;
+
+    public void deposit(long amount) {
+        if (amount <= 0) {
+            throw new IllegalArgumentException("amount must be positive");
+        }
+
+        balance += amount;
+    }
+
+    public long getBalance() {
+        return balance;
+    }
+}
+```
+
+Здесь внешний код знает **что можно сделать**, но не обязан знать **как внутри хранится и изменяется balance**.
+
+Инкапсуляция — это не просто «все поля сделать `private` и создать getter/setter». Если написать:
+
+```java
+public void setBalance(long balance) {
+    this.balance = balance;
+}
+```
+
+то формально поле скрыто, но объект всё ещё может позволять установить некорректное состояние.
+
+Главная идея:
+
+> Объект сам контролирует допустимые изменения своего состояния.
+
+#### Наследование
+
+**Наследование (inheritance)** позволяет создать новый класс на основе существующего.
+
+```java
+class Animal {
+    void makeSound() {
+        System.out.println("...");
+    }
+}
+
+class Dog extends Animal {
+    @Override
+    void makeSound() {
+        System.out.println("Woof");
+    }
+}
+```
+
+`Dog` наследует доступное поведение `Animal` и может его переопределять.
+
+Отношение наследования обычно читают как **is-a**:
+
+```text
+Dog is an Animal
+```
+
+Java поддерживает:
+
+- наследование **одного класса** через `extends`;
+- реализацию **нескольких интерфейсов** через `implements`.
+
+```java
+class Dog extends Animal implements Runnable, Comparable<Dog> {
+    // ...
+}
+```
+
+Множественного наследования классов в Java нет:
+
+```java
+// class C extends A, B { } // нельзя
+```
+
+Это избегает ряда неоднозначностей состояния и реализации, возникающих при наследовании сразу от нескольких классов.
+
+#### Наследование — не просто способ переиспользовать код
+
+Если классы имеют похожий код, это ещё не означает, что между ними должно быть наследование.
+
+Наследник должен корректно использоваться там, где ожидается родитель:
+
+```java
+void process(Animal animal) {
+    animal.makeSound();
+}
+
+process(new Dog());
+```
+
+Это связано с **Liskov Substitution Principle (LSP)**: подтип не должен неожиданно ломать ожидания, установленные контрактом базового типа.
+
+Исходный конспект формулирует эту идею практически: если наследник в корне меняет ожидаемое поведение родителя, такую иерархию лучше не строить.
+
+#### Полиморфизм
+
+**Полиморфизм (polymorphism)** позволяет работать с объектами разных конкретных типов через общий базовый тип.
+
+```java
+interface PaymentProcessor {
+    void pay(long amount);
+}
+
+class CardProcessor implements PaymentProcessor {
+    @Override
+    public void pay(long amount) {
+        System.out.println("Pay by card: " + amount);
+    }
+}
+
+class CryptoProcessor implements PaymentProcessor {
+    @Override
+    public void pay(long amount) {
+        System.out.println("Pay by crypto: " + amount);
+    }
+}
+```
+
+Клиентский код зависит от абстракции:
+
+```java
+static void checkout(PaymentProcessor processor) {
+    processor.pay(100);
+}
+
+checkout(new CardProcessor());
+checkout(new CryptoProcessor());
+```
+
+`checkout()` не нужно знать конкретный класс.
+
+Это один из главных практических эффектов ООП:
+
+```text
+           PaymentProcessor
+             ▲          ▲
+             │          │
+      CardProcessor  CryptoProcessor
+             ▲          ▲
+             └──── checkout() ────┘
+```
+
+#### Dynamic dispatch
+
+Рассмотрим:
+
+```java
+Animal animal = new Dog();
+animal.makeSound();
+```
+
+Тип переменной — `Animal`, реальный объект — `Dog`.
+
+Для переопределённого instance-метода JVM выбирает реализацию в соответствии с **runtime class объекта**:
+
+```text
+reference type: Animal
+runtime object: Dog
+
+animal.makeSound()
+        │
+        ▼
+Dog.makeSound()
+```
+
+Это называют **dynamic method dispatch**.
+
+Именно он лежит в основе runtime polymorphism для переопределённых instance methods.
+
+#### Overriding и Overloading — не одно и то же
+
+**Overriding (переопределение)** — наследник предоставляет новую реализацию instance-метода базового типа:
+
+```java
+class Animal {
+    void makeSound() {}
+}
+
+class Dog extends Animal {
+    @Override
+    void makeSound() {}
+}
+```
+
+Какой overriding-метод выполнить, определяется runtime type объекта.
+
+**Overloading (перегрузка)** — методы имеют одно имя, но разные списки параметров:
+
+```java
+void print(int value) {}
+void print(String value) {}
+```
+
+Выбор подходящей overload-сигнатуры выполняется **на этапе компиляции** исходя из compile-time типов и правил overload resolution.
+
+Ловушка:
+
+```java
+static void print(Animal animal) {
+    System.out.println("Animal");
+}
+
+static void print(Dog dog) {
+    System.out.println("Dog");
+}
+
+Animal animal = new Dog();
+print(animal);
+```
+
+Результат:
+
+```text
+Animal
+```
+
+Потому что overload выбирается по compile-time типу `animal`, то есть `Animal`.
+
+#### static-методы не участвуют в dynamic dispatch как instance methods
+
+```java
+class Parent {
+    static void hello() {
+        System.out.println("Parent");
+    }
+}
+
+class Child extends Parent {
+    static void hello() {
+        System.out.println("Child");
+    }
+}
+```
+
+Для static methods речь идёт не об overriding, а о **method hiding**.
+
+Поэтому:
+
+```java
+Parent value = new Child();
+value.hello();
+```
+
+выберет метод на основе compile-time типа `Parent`, а не runtime-типа объекта.
+
+Практически static-методы лучше вызывать через имя класса:
+
+```java
+Parent.hello();
+Child.hello();
+```
+
+#### Абстракция
+
+**Абстракция (abstraction)** — выделение существенного контракта и сокрытие ненужных пользователю деталей реализации.
+
+Например:
+
+```java
+interface NotificationSender {
+    void send(String message);
+}
+```
+
+Код, использующий `NotificationSender`, знает только контракт:
+
+```java
+class OrderService {
+    private final NotificationSender sender;
+
+    OrderService(NotificationSender sender) {
+        this.sender = sender;
+    }
+
+    void createOrder() {
+        // business logic
+        sender.send("Order created");
+    }
+}
+```
+
+Конкретная реализация может быть любой:
+
+```java
+class EmailSender implements NotificationSender {
+    @Override
+    public void send(String message) {
+        // SMTP implementation
+    }
+}
+```
+
+```java
+class TelegramSender implements NotificationSender {
+    @Override
+    public void send(String message) {
+        // Telegram API implementation
+    }
+}
+```
+
+`OrderService` не зависит от деталей SMTP или Telegram API.
+
+Инкапсуляция и абстракция связаны, но это не одно и то же:
+
+- **инкапсуляция** отвечает за границы объекта и контроль его внутреннего состояния;
+- **абстракция** отвечает за то, какой существенный контракт мы показываем пользователю, скрывая лишние детали.
+
+#### Composition over inheritance
+
+**Композиция (composition)** означает, что объект получает нужное поведение через другие объекты, а не обязательно через наследование.
+
+Через наследование:
+
+```text
+Car extends Engine
+```
+
+Это плохая модель: автомобиль **не является двигателем**.
+
+Через композицию:
+
+```java
+class Car {
+    private final Engine engine;
+
+    Car(Engine engine) {
+        this.engine = engine;
+    }
+
+    void start() {
+        engine.start();
+    }
+}
+```
+
+Отношение:
+
+```text
+Car has an Engine
+```
+
+Композиция часто предпочтительнее, потому что:
+
+- уменьшает жёсткую связанность с базовым классом;
+- позволяет заменять реализацию зависимости;
+- удобнее тестируется;
+- не заставляет моделировать ложное отношение `is-a`;
+- позволяет собирать поведение из нескольких компонентов.
+
+Но правило **composition over inheritance** не означает «наследование всегда плохо». Наследование хорошо подходит, когда существует настоящее отношение подтипа и соблюдается контракт базового класса.
+
+#### Пример: полиморфизм вместо большого if/switch
+
+Без полиморфизма:
+
+```java
+void pay(String type, long amount) {
+    if ("CARD".equals(type)) {
+        // card logic
+    } else if ("CRYPTO".equals(type)) {
+        // crypto logic
+    }
+}
+```
+
+При добавлении каждого нового способа оплаты этот метод приходится менять.
+
+С полиморфизмом:
+
+```java
+interface PaymentProcessor {
+    void pay(long amount);
+}
+```
+
+Каждая реализация содержит своё поведение, а вызывающий код работает с общим контрактом:
+
+```java
+void pay(PaymentProcessor processor, long amount) {
+    processor.pay(amount);
+}
+```
+
+Это не означает, что любой `switch` нужно заменять иерархией классов. Полиморфизм полезен, когда у нас действительно есть несколько взаимозаменяемых поведений и ожидается их развитие.
+
+#### Типичные ошибки
+
+**«Инкапсуляция — это private поля + getters/setters».**  
+Это только инструмент. Цель — контролировать состояние и скрывать внутренние детали.
+
+**«Наследование нужно для переиспользования кода».**  
+Переиспользование — возможный эффект, но главным должно быть корректное отношение подтипа `is-a`.
+
+**«Overloading — runtime polymorphism».**  
+Overload resolution происходит на compile time. Dynamic dispatch относится к overriding instance methods.
+
+**«static-метод переопределяется».**  
+Нет. Static methods скрываются (method hiding), а не участвуют в обычном dynamic dispatch.
+
+**«Composition over inheritance означает никогда не использовать extends».**  
+Нет. Нужно выбирать композицию, когда требуется `has-a`/делегирование, и наследование — когда действительно моделируется корректный подтип.
+
+#### Что важно запомнить
+
+- **Encapsulation** — объект контролирует своё состояние и скрывает детали реализации.
+- **Inheritance** — отношение подтипа `is-a`; в Java класс наследуется только от одного класса.
+- **Polymorphism** — разные реализации можно использовать через общий тип.
+- **Abstraction** — клиент работает с существенным контрактом, не зная лишних деталей реализации.
+- Overriding instance methods поддерживает **dynamic dispatch** по runtime type объекта.
+- Overloading разрешается **на compile time**.
+- Static methods скрываются, а не переопределяются полиморфно.
+- Композиция часто гибче наследования, но наследование уместно для настоящего отношения подтипа.
+
+#### На собеседовании
+
+**Назовите основные принципы ООП.**
+
+> Обычно выделяют инкапсуляцию, наследование, полиморфизм и абстракцию. Инкапсуляция позволяет объекту контролировать своё состояние, наследование моделирует отношение подтипа, полиморфизм позволяет работать с разными реализациями через общий тип, а абстракция выделяет необходимый контракт и скрывает детали реализации.
+
+**Что такое полиморфизм в Java?**
+
+> Это возможность использовать объекты разных конкретных типов через общий базовый класс или интерфейс. При вызове переопределённого instance-метода конкретная реализация выбирается по runtime type объекта — это dynamic dispatch.
+
+**Чем overriding отличается от overloading?**
+
+> Overriding — наследник переопределяет instance-метод родителя, и конкретная реализация выбирается во время выполнения по runtime type. Overloading — несколько методов имеют одно имя, но разные параметры; нужная сигнатура выбирается компилятором на compile time.
+
+**Почему часто рекомендуют composition over inheritance?**
+
+> Композиция слабее связывает классы и позволяет менять или подменять поведение через зависимости. Наследование стоит использовать, когда объект действительно является подтипом базового класса и сохраняет его контракт, а не просто ради повторного использования нескольких методов.
+
+#### Источники и уточнения
+
+- Исходный конспект содержит наследование в контексте JPA/Hibernate и отдельно связывает корректную иерархию наследования с Liskov Substitution Principle.
+- Исходный материал по SOLID формулирует LSP как требование не менять поведение наследника неожиданным для контракта родителя образом; подробный SOLID будет разобран в своей главе.
+- [Java Language Specification — Classes](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html) — классы, наследование, overriding и hiding.
+- [Java Language Specification — Interfaces](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html) — интерфейсы и их наследование.
+- [Java Language Specification — Method Invocation](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.12) — overload resolution и выбор метода.
+
+**Далее:** 1.9. Классы, интерфейсы и abstract classes — `extends` vs `implements`, default/static/private interface methods, множественная реализация интерфейсов и выбор между interface и abstract class.
