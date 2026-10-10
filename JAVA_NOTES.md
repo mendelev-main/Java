@@ -1446,3 +1446,384 @@ System.out.println(Double.isNaN(value));  // true
 - [Java Language Specification — Expressions](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html) — арифметика, compound assignment и операторы.
 
 **Далее:** 1.6. Wrapper classes и autoboxing/unboxing — Integer cache, сравнение через `==` и `equals()`, nullable wrappers и типичные ловушки.
+
+---
+
+### 1.6. Wrapper classes и autoboxing/unboxing
+
+Для каждого primitive type в Java существует соответствующий **wrapper class (класс-обёртка)**:
+
+| Primitive | Wrapper |
+| --- | --- |
+| `byte` | `Byte` |
+| `short` | `Short` |
+| `int` | `Integer` |
+| `long` | `Long` |
+| `float` | `Float` |
+| `double` | `Double` |
+| `char` | `Character` |
+| `boolean` | `Boolean` |
+
+Обёртки нужны, когда значение должно использоваться как объект. Например, Java generics не работают непосредственно с primitive types:
+
+```java
+// List<int> numbers;      // нельзя
+List<Integer> numbers;     // можно
+```
+
+Wrapper classes также предоставляют полезные методы:
+
+```java
+int value = Integer.parseInt("42");
+int max = Integer.max(10, 20);
+boolean digit = Character.isDigit('7');
+```
+
+> В найденных разделах исходного конспекта отдельного материала про wrapper classes и autoboxing практически нет. Этот подраздел добавлен как необходимая часть Java Core на основе правил Java Language Specification и API wrapper-классов.
+
+#### Autoboxing
+
+**Autoboxing** — автоматическое преобразование primitive value в соответствующий wrapper type.
+
+```java
+Integer number = 10;
+```
+
+Концептуально это соответствует вызову:
+
+```java
+Integer number = Integer.valueOf(10);
+```
+
+Другой частый пример:
+
+```java
+List<Integer> numbers = new ArrayList<>();
+
+numbers.add(10); // int → Integer
+```
+
+Метод `add()` ожидает `Integer`, поэтому компилятор применяет boxing conversion.
+
+#### Unboxing
+
+**Unboxing** — обратное преобразование wrapper object в primitive value:
+
+```java
+Integer boxed = 10;
+int primitive = boxed;
+```
+
+Концептуально:
+
+```java
+int primitive = boxed.intValue();
+```
+
+Autoboxing/unboxing — удобный синтаксический механизм языка. Но важно помнить, что `int` и `Integer` **не становятся одним и тем же типом**.
+
+#### Главная ловушка unboxing: null
+
+Primitive не может быть `null`, а wrapper — может:
+
+```java
+Integer count = null;
+```
+
+Поэтому:
+
+```java
+Integer count = null;
+int value = count;
+```
+
+во время выполнения приведёт к:
+
+```text
+NullPointerException
+```
+
+Причина — скрытый unboxing:
+
+```java
+int value = count.intValue();
+```
+
+Такая ошибка особенно неприятна, когда преобразование спрятано внутри выражения:
+
+```java
+Integer count = null;
+
+if (count > 0) {
+    // ...
+}
+```
+
+Для сравнения с `0` Java должна получить primitive `int`, поэтому происходит unboxing `null`.
+
+Практический вывод: если значение по смыслу **не может отсутствовать**, primitive часто безопаснее wrapper. Wrapper нужен, когда `null` действительно несёт отдельный смысл либо API требует объект.
+
+#### `==` и `equals()` у wrapper-объектов
+
+Для primitives оператор `==` сравнивает значения:
+
+```java
+int a = 1000;
+int b = 1000;
+
+System.out.println(a == b); // true
+```
+
+Для двух references `==` проверяет, ссылаются ли они на **один и тот же объект**:
+
+```java
+Integer a = 1000;
+Integer b = 1000;
+
+System.out.println(a == b);      // обычно false
+System.out.println(a.equals(b)); // true
+```
+
+Поэтому wrapper values по содержимому обычно сравнивают через `equals()`:
+
+```java
+Objects.equals(a, b);
+```
+
+`Objects.equals()` особенно удобен, если один из operands может быть `null`.
+
+#### Integer Cache
+
+Почему следующий код может удивить?
+
+```java
+Integer a = 100;
+Integer b = 100;
+
+System.out.println(a == b); // true
+```
+
+При boxing Java использует `Integer.valueOf(...)`. Для небольших целых значений используются заранее созданные объекты.
+
+Java Language Specification гарантирует для определённых constant expressions как минимум диапазон:
+
+```text
+-128 ... 127
+```
+
+Поэтому:
+
+```java
+Integer a = 127;
+Integer b = 127;
+
+System.out.println(a == b); // true
+```
+
+Но:
+
+```java
+Integer a = 128;
+Integer b = 128;
+
+System.out.println(a == b); // обычно false
+```
+
+**Нельзя строить бизнес-логику на таком поведении `==`.** Если нужны равные числовые значения:
+
+```java
+a.equals(b)
+```
+
+или null-safe вариант:
+
+```java
+Objects.equals(a, b)
+```
+
+Практическая формула:
+
+```text
+primitive == primitive → сравнение значений
+reference == reference → сравнение идентичности ссылок
+wrapper.equals(...)    → сравнение значения с учётом типа
+```
+
+#### Почему `new Integer(...)` использовать не нужно
+
+Исторически можно было написать:
+
+```java
+Integer value = new Integer(10);
+```
+
+Но constructors wrapper-классов вроде `Integer(int)` давно deprecated for removal. Для boxing используется `Integer.valueOf()`, а чаще всего достаточно autoboxing:
+
+```java
+Integer value = 10;
+```
+
+Это также позволяет использовать cache там, где он предусмотрен.
+
+#### Смешанное сравнение wrapper и primitive
+
+Рассмотрим:
+
+```java
+Integer a = 1000;
+int b = 1000;
+
+System.out.println(a == b); // true
+```
+
+Здесь сравниваются не две references. `a` проходит **unboxing**, после чего фактически сравниваются два `int`.
+
+Но если `a == null`:
+
+```java
+Integer a = null;
+int b = 1000;
+
+System.out.println(a == b); // NullPointerException
+```
+
+Это ещё одна причина всегда смотреть на **типы operands**, а не запоминать правило «`==` с Integer работает так-то».
+
+#### Arithmetic и скрытый boxing
+
+Wrapper участвует в арифметике через unboxing:
+
+```java
+Integer count = 10;
+count++;
+```
+
+Упрощённо происходит:
+
+```text
+Integer
+   │ unboxing
+   ▼
+  int
+   │ + 1
+   ▼
+  int
+   │ boxing
+   ▼
+Integer
+```
+
+То есть wrapper не становится mutable. `Integer` — immutable class: результат операции представляет другое значение/ссылку.
+
+Это важно и для производительности: большое количество boxing/unboxing может создавать лишнюю работу и, когда значение не берётся из cache, потенциальные allocations.
+
+Например, в производительном числовом коде:
+
+```java
+long sum = 0;
+for (int i = 0; i < 1_000_000; i++) {
+    sum += i;
+}
+```
+
+primitive types обычно предпочтительнее wrappers, если объектная семантика не нужна.
+
+#### Wrapper в generics и collections
+
+Generics принимают reference types:
+
+```java
+List<Integer> ids = List.of(1, 2, 3);
+Map<Long, Boolean> flags = new HashMap<>();
+```
+
+Поэтому при работе с коллекциями primitives автоматически boxing-ятся.
+
+Из этого следует типичная ловушка с перегрузками `List.remove()`:
+
+```java
+List<Integer> numbers = new ArrayList<>(List.of(10, 20, 30));
+
+numbers.remove(1);
+```
+
+Здесь вызывается:
+
+```java
+remove(int index)
+```
+
+и удаляется элемент с индексом `1`, то есть `20`.
+
+Если нужно удалить значение:
+
+```java
+numbers.remove(Integer.valueOf(10));
+```
+
+тогда вызывается:
+
+```java
+remove(Object o)
+```
+
+Это уже пересечение wrapper types с Collections; подробно поведение списков разберём в отдельной главе.
+
+#### Wrapper и методы
+
+Wrapper classes полезны не только из-за generics. Они содержат константы и операции преобразования:
+
+```java
+int value = Integer.parseInt("123");
+Integer boxed = Integer.valueOf("123");
+
+String binary = Integer.toBinaryString(10);
+
+System.out.println(Integer.MAX_VALUE);
+System.out.println(Integer.MIN_VALUE);
+```
+
+Важно различать:
+
+```java
+Integer.parseInt("42")  // возвращает primitive int
+Integer.valueOf("42")   // возвращает Integer
+```
+
+#### Что важно запомнить
+
+- Wrapper classes — объектные аналоги восьми primitive types.
+- **Autoboxing:** primitive → wrapper; **unboxing:** wrapper → primitive.
+- Unboxing `null` приводит к **NullPointerException**.
+- `==` между двумя wrapper references проверяет identity, а `equals()` — значение.
+- При смешанном сравнении wrapper с primitive может произойти unboxing.
+- Для `Integer` при boxing гарантирован cache как минимум для `-128..127`; нельзя использовать это как причину сравнивать wrappers через `==`.
+- Generics работают с reference types, поэтому `List<int>` невозможен, а `List<Integer>` — возможен.
+- `Integer` и другие числовые wrappers immutable.
+- Лишний boxing/unboxing может быть нежелателен в performance-sensitive коде.
+
+#### На собеседовании
+
+**Что такое autoboxing и unboxing?**
+
+> Autoboxing — автоматическое преобразование primitive в wrapper, например int в Integer. Unboxing — обратное преобразование Integer в int. Компилятор вставляет необходимые преобразования, например через Integer.valueOf() и intValue(). Важно помнить, что при unboxing null возникает NullPointerException.
+
+**Почему Integer нельзя надёжно сравнивать через ==?**
+
+> Потому что Integer — reference type, и == между двумя references сравнивает идентичность объектов. Для небольших значений результат может случайно выглядеть как сравнение значений из-за Integer Cache, например для диапазона -128..127. Для сравнения значения нужно использовать equals() или Objects.equals().
+
+**Почему `Integer a = 127; Integer b = 127; a == b` возвращает true?**
+
+> При autoboxing используется Integer.valueOf(), а небольшие Integer-классы кэшируются. Для constant values в диапазоне как минимум -128..127 спецификация гарантирует одинаковые boxed instances. Но полагаться на == для сравнения wrapper values нельзя.
+
+**Что произойдёт при `Integer value = null; int x = value;`?**
+
+> Произойдёт unboxing. JVM попытается получить primitive value из null-reference, поэтому будет NullPointerException.
+
+#### Источники и уточнения
+
+- В найденных разделах пользовательского конспекта отдельный материал по wrapper classes/autoboxing отсутствует; подраздел добавлен как необходимая база Java Core.
+- [Java Language Specification — Boxing and Unboxing Conversions](https://docs.oracle.com/javase/specs/jls/se26/html/jls-5.html#jls-5.1.7) — правила boxing, cache guarantees и unboxing.
+- [Integer API](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/lang/Integer.html) — `valueOf`, `parseInt`, константы и API `Integer`.
+
+**Далее:** 1.7. Передача параметров и операторы Java — pass-by-value, ссылки как значения, `==`, short-circuit operators и особенности вычисления выражений.
