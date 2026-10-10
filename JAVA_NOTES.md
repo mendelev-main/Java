@@ -3373,3 +3373,519 @@ Interface даёт множественное наследование **кон�
 - [Java Language Specification — Overriding](https://docs.oracle.com/javase/specs/jls/se26/html/jls-9.html#jls-9.4.1) — правила overriding interface methods.
 
 **Далее:** 1.10. Модификаторы `static` и `final` — class/instance members, static initialization, final variables/methods/classes, effectively final и важные ограничения.
+
+---
+
+### 1.10. `static` и `final`: принадлежность классу и запрет изменения
+
+`static` и `final` решают разные задачи:
+
+```text
+static → member принадлежит классу, а не конкретному объекту
+final  → запрещает определённый вид изменения
+```
+
+Они могут использоваться вместе:
+
+```java
+public static final int MAX_RETRIES = 3;
+```
+
+Так обычно объявляют константы уровня класса.
+
+> В исходном конспекте `final` подробно появляется в контексте Java Memory Model и безопасной публикации, а static-поля — в теме памяти JVM. Отдельного цельного раздела по языковой семантике `static/final` в найденном материале нет, поэтому базовые правила ниже дополнены по Java Language Specification. JMM-гарантии `final` здесь только обозначены; подробно они будут разобраны в главе JMM.
+
+#### Instance members и static members
+
+Обычное поле принадлежит **конкретному экземпляру**:
+
+```java
+class User {
+    String name;
+}
+```
+
+```java
+User first = new User();
+first.name = "Alice";
+
+User second = new User();
+second.name = "Bob";
+```
+
+У объектов независимые значения:
+
+```text
+first  ─► User { name = "Alice" }
+second ─► User { name = "Bob" }
+```
+
+Static field принадлежит **классу как целому**:
+
+```java
+class User {
+    static int createdCount;
+    String name;
+
+    User(String name) {
+        this.name = name;
+        createdCount++;
+    }
+}
+```
+
+```java
+new User("Alice");
+new User("Bob");
+
+System.out.println(User.createdCount); // 2
+```
+
+Все экземпляры работают с одним static field данного класса/ClassLoader.
+
+Практически static members лучше обращаться через имя класса:
+
+```java
+User.createdCount
+```
+
+а не:
+
+```java
+user.createdCount
+```
+
+Последняя форма для доступного static field может компилироваться, но создаёт ложное впечатление, что значение принадлежит объекту.
+
+#### Static method
+
+Static method также относится к классу:
+
+```java
+class MathUtils {
+
+    static int square(int value) {
+        return value * value;
+    }
+}
+```
+
+Вызов:
+
+```java
+int result = MathUtils.square(5);
+```
+
+У static method нет текущего экземпляра `this`.
+
+Поэтому напрямую обратиться к instance field нельзя:
+
+```java
+class User {
+    String name;
+
+    static void printName() {
+        // System.out.println(name); // compile error
+    }
+}
+```
+
+Но static method может работать с объектом, если ссылка на него получена явно:
+
+```java
+static void printName(User user) {
+    System.out.println(user.name);
+}
+```
+
+#### Static method не переопределяется полиморфно
+
+Как уже обсуждалось в ООП, static methods **скрываются (method hiding)**, а не участвуют в dynamic dispatch как instance methods.
+
+```java
+class Parent {
+    static void print() {
+        System.out.println("Parent");
+    }
+}
+
+class Child extends Parent {
+    static void print() {
+        System.out.println("Child");
+    }
+}
+```
+
+```java
+Parent value = new Child();
+value.print(); // Parent
+```
+
+Выбор static method связан с compile-time type выражения.
+
+Для читаемости:
+
+```java
+Parent.print();
+Child.print();
+```
+
+#### Static initialization
+
+Класс может иметь static field initializers и static blocks:
+
+```java
+class Config {
+
+    static String host = loadHost();
+
+    static {
+        System.out.println("Config initialized");
+    }
+
+    private static String loadHost() {
+        return "localhost";
+    }
+}
+```
+
+При **инициализации класса** static initializers и static blocks выполняются в текстовом порядке, в котором они записаны в классе.
+
+Например:
+
+```java
+class Example {
+
+    static int a = print("a");
+
+    static {
+        print("block");
+    }
+
+    static int b = print("b");
+
+    static int print(String value) {
+        System.out.println(value);
+        return 1;
+    }
+}
+```
+
+При инициализации:
+
+```text
+a
+block
+b
+```
+
+Важно отличать **загрузку класса** от его **инициализации**: ClassLoader может загрузить класс раньше, а static initialization запускается при наступлении условий инициализации, определённых JVM/JLS.
+
+#### Когда класс инициализируется?
+
+Типичные случаи active use:
+
+```java
+new MyClass();
+MyClass.someStaticMethod();
+System.out.println(MyClass.nonConstantStaticField);
+```
+
+Перед первым таким использованием класс должен быть инициализирован.
+
+Но есть важная ловушка с compile-time constants:
+
+```java
+class Constants {
+    static final int PORT = 8080;
+
+    static {
+        System.out.println("initialized");
+    }
+}
+```
+
+```java
+System.out.println(Constants.PORT);
+```
+
+Если `PORT` — **constant variable** и значение встроено компилятором в использующий код, такое обращение само по себе не обязано инициировать initialization класса `Constants`.
+
+Это одна из причин, почему «любое обращение к static-полю загружает и инициализирует класс» — слишком грубое правило.
+
+#### Что означает `final` для переменной?
+
+Final variable можно присвоить **только один раз**:
+
+```java
+final int port = 8080;
+
+// port = 9090; // compile error
+```
+
+Final local variable можно присвоить позже, если компилятор может доказать, что это происходит ровно один раз:
+
+```java
+final int value;
+
+if (condition) {
+    value = 10;
+} else {
+    value = 20;
+}
+
+System.out.println(value);
+```
+
+Это называется **blank final** в соответствующих контекстах: значение не обязательно задавать прямо в месте объявления, но после присваивания изменить его нельзя.
+
+#### Final reference не делает объект immutable
+
+Очень важная ловушка:
+
+```java
+final List<String> names = new ArrayList<>();
+
+names.add("Alice"); // OK
+names.add("Bob");   // OK
+```
+
+Запрещено изменить **саму ссылку**:
+
+```java
+// names = new ArrayList<>(); // compile error
+```
+
+Но объект остаётся mutable:
+
+```text
+final reference ─────────► mutable ArrayList
+      │
+      └── reference нельзя перенаправить
+                         объект менять можно
+```
+
+Следовательно:
+
+> `final` reference ≠ immutable object.
+
+Для иммутабельности нужно контролировать состояние самого объекта, а не только ссылку на него.
+
+#### Final field
+
+```java
+class User {
+    private final long id;
+    private final String name;
+
+    User(long id, String name) {
+        this.id = id;
+        this.name = name;
+    }
+}
+```
+
+Instance final field должен быть гарантированно присвоен до завершения constructor — либо в объявлении, либо в constructor/initializer по правилам definite assignment.
+
+Final fields полезны для объектов, состояние которых после создания не должно переназначаться.
+
+Но снова:
+
+```java
+class Team {
+    private final List<String> members = new ArrayList<>();
+}
+```
+
+список всё ещё mutable.
+
+#### `static final` — всегда константа?
+
+Не обязательно.
+
+```java
+static final int MAX = 100;
+```
+
+Это может быть **compile-time constant**, если initializer является constant expression подходящего primitive/String типа.
+
+Но:
+
+```java
+static final Integer LIMIT = Integer.valueOf(100);
+static final List<String> NAMES = new ArrayList<>();
+static final String ID = UUID.randomUUID().toString();
+```
+
+тоже `static final`, однако это не compile-time constants в смысле JLS.
+
+Поэтому полезно различать:
+
+```text
+static final
+      ≠
+compile-time constant во всех случаях
+```
+
+#### Final method
+
+Final instance method нельзя override:
+
+```java
+class PaymentService {
+
+    public final void validate() {
+        // fixed behavior
+    }
+}
+```
+
+Наследник может пользоваться методом, но не заменить его реализацию.
+
+Это используют, когда определённую часть поведения базового класса нельзя нарушать.
+
+#### Final class
+
+Final class нельзя наследовать:
+
+```java
+final class Token {
+}
+```
+
+```java
+// class JwtToken extends Token { } // compile error
+```
+
+Например, `String` — final class.
+
+Но `final class` сам по себе **не гарантирует immutable state**. Он лишь запрещает наследование. Для настоящей immutability нужно дополнительно правильно проектировать поля и API.
+
+#### `abstract` и `final`
+
+Для класса:
+
+```text
+abstract → класс предполагает наследование для завершения реализации
+final    → наследование запрещено
+```
+
+Поэтому класс не может быть одновременно `abstract final`.
+
+Аналогично abstract method требует реализации в наследнике, а final method запрещает overriding, поэтому сочетание для одного метода невозможно.
+
+#### Effectively final
+
+Начиная с Java 8 локальная переменная не обязана быть явно помечена `final`, чтобы использоваться в lambda expression или anonymous/local class, если она **effectively final**.
+
+```java
+String prefix = "USER-";
+
+Function<String, String> mapper =
+        value -> prefix + value;
+```
+
+`prefix` effectively final, потому что после первоначального присваивания значение переменной не меняется.
+
+Но:
+
+```java
+String prefix = "USER-";
+prefix = "ADMIN-";
+
+Function<String, String> mapper =
+        value -> prefix + value; // compile error
+```
+
+Переменная перестала быть effectively final.
+
+Причина связана с тем, что lambda захватывает значение локальной переменной, а не получает общую изменяемую stack-variable между жизненными циклами вызовов.
+
+#### Почему это не запрещает менять объект?
+
+```java
+List<String> names = new ArrayList<>();
+
+Runnable task = () -> names.add("Alice");
+```
+
+Это допустимо, если переменная `names` не переназначается.
+
+Effectively final относится к **переменной-ссылке**, а не к mutability объекта:
+
+```text
+names ─────────► ArrayList
+  │                │
+  │                └── содержимое может меняться
+  └── сама local variable не переназначается
+```
+
+Это та же концептуальная граница, что и у final reference.
+
+#### `final` и Java Memory Model
+
+Исходный конспект отдельно отмечает важное свойство `final` в JMM: корректно сконструированный объект имеет специальные гарантии видимости для final fields после завершения constructor. fileciteturn40file1
+
+Это **не означает**, что добавление `final` автоматически делает весь объект thread-safe. Например, final reference на mutable collection не делает операции над коллекцией потокобезопасными.
+
+Детали final-field semantics, safe publication и happens-before разберём в главе **Java Memory Model**.
+
+#### Типичные ошибки
+
+**«static field существует отдельно у каждого объекта».**  
+Нет. Static member относится к классу, а не к экземпляру.
+
+**«static method может напрямую обратиться к this».**  
+Нет. У static method нет текущего экземпляра.
+
+**«final reference делает объект immutable».**  
+Нет. Нельзя переназначить ссылку, но mutable object через неё менять можно.
+
+**«static final всегда compile-time constant».**  
+Нет. Это зависит от типа и initializer; `UUID.randomUUID().toString()` не становится compile-time constant только из-за `static final`.
+
+**«final class обязательно immutable».**  
+Нет. Final запрещает наследование, но ничего сам по себе не говорит о mutability полей.
+
+**«effectively final означает, что объект нельзя менять».**  
+Нет. Нельзя переназначать захватываемую local variable; состояние объекта может оставаться mutable.
+
+#### Что важно запомнить
+
+- `static` означает принадлежность **классу**, а не экземпляру.
+- Static method не имеет `this` и не участвует в dynamic dispatch как instance method.
+- Static initializers выполняются при initialization класса в текстовом порядке.
+- `final` variable можно присвоить один раз.
+- Final reference запрещает переназначить ссылку, но **не делает объект immutable**.
+- Final method нельзя override, final class нельзя наследовать.
+- `static final` не всегда означает compile-time constant.
+- Local variable может быть **effectively final** без явного `final` и тогда может захватываться lambda.
+- У final fields есть специальные гарантии JMM при корректном конструировании объекта, но `final` не равен thread safety.
+
+#### На собеседовании
+
+**Что означает `static`?**
+
+> Static member принадлежит классу, а не конкретному экземпляру. Static field общий для экземпляров данного класса в рамках соответствующей загрузки класса, а static method вызывается без объекта и не имеет `this`.
+
+**Что означает `final` для переменной, метода и класса?**
+
+> Final variable нельзя переназначить после присваивания. Final method нельзя override. Final class нельзя наследовать. При этом final reference не делает сам объект immutable.
+
+**Чем `static final` отличается от compile-time constant?**
+
+> `static final` лишь означает static member с однократным присваиванием ссылки/значения. Compile-time constant имеет дополнительные требования JLS: например, primitive или String variable с constant expression initializer. Поэтому `static final String ID = UUID.randomUUID().toString()` не является compile-time constant.
+
+**Что такое effectively final?**
+
+> Это локальная переменная или параметр, которые не объявлены final, но после присваивания не изменяются. Такие переменные можно захватывать в lambda. Требование относится к самой переменной: объект, на который она ссылается, при этом может быть mutable.
+
+#### Источники и уточнения
+
+- Исходный конспект связывает `final` с JMM и safe publication: корректно инициализированные final fields имеют специальные гарантии видимости. fileciteturn40file1
+- Исходник также обсуждает static fields в разделе памяти JVM; физическое размещение не используется здесь как языковая гарантия, поскольку это отдельный implementation-level вопрос. fileciteturn40file8
+- [Java Language Specification — Class Members](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html) — static/final fields, methods, initialization и inheritance.
+- [Java Language Specification — Initialization](https://docs.oracle.com/javase/specs/jls/se26/html/jls-12.html#jls-12.4) — условия и порядок initialization классов.
+- [Java Language Specification — Lambda Expressions](https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.27) — захват final/effectively final variables.
+
+**Далее:** 1.11. Generics — type parameters, invariance, wildcards, PECS, bounded types, type erasure и ограничения generics.
