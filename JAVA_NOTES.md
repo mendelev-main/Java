@@ -7473,3 +7473,353 @@ User(String name, int age) {}
 - [JLS — Constructor Body](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7) — constructor invocation и initialization.
 
 **Далее:** 2.1. Collections Framework — иерархия `Collection`, отличие `List`, `Set`, `Queue`, место `Map`, базовые контракты и выбор структуры данных.
+
+---
+
+## 2. Collections
+
+### 2.1. Collections Framework: основные интерфейсы и выбор коллекции
+
+**Java Collections Framework (JCF)** — набор interfaces, implementations и algorithms для работы с группами объектов.
+
+Базовая карта:
+
+```text
+Iterable
+└── Collection
+    ├── List
+    ├── Set
+    │   └── SortedSet / NavigableSet
+    └── Queue
+        └── Deque
+
+Map
+└── SortedMap / NavigableMap
+```
+
+Ключевой факт:
+
+> `Map` — часть Collections Framework, но **не subtype `Collection`**.
+
+У `Collection<E>` модель — набор отдельных элементов `E`. У `Map<K,V>` — соответствия key → value.
+
+#### `List`
+
+`List<E>` — упорядоченная последовательность элементов с индексами. Обычно допускает duplicates.
+
+```java
+List<String> names =
+        new ArrayList<>();
+
+names.add("Alice");
+names.add("Bob");
+names.add("Alice");
+
+System.out.println(names.get(1)); // Bob
+```
+
+Типичные реализации:
+
+```text
+ArrayList
+LinkedList
+```
+
+Для большинства обычных списков стартовый выбор — `ArrayList`; внутреннее устройство и сложности сравним отдельно.
+
+#### `Set`
+
+`Set<E>` моделирует множество без duplicate elements по контракту equality конкретной реализации.
+
+```java
+Set<String> names = new HashSet<>();
+
+names.add("Alice");
+names.add("Alice");
+
+System.out.println(names.size()); // 1
+```
+
+Типичные реализации:
+
+```text
+HashSet       → hash-based set
+LinkedHashSet → предсказуемый encounter order
+TreeSet       → sorted/navigable set
+```
+
+Корректность hash-based collections тесно связана с контрактом `equals()/hashCode()`, который будет разобран в отдельной главе.
+
+#### `Queue`
+
+`Queue<E>` предназначена для элементов, ожидающих обработки.
+
+```java
+Queue<String> queue =
+        new ArrayDeque<>();
+
+queue.offer("first");
+queue.offer("second");
+
+System.out.println(queue.poll()); // first
+```
+
+Но Queue не означает автоматически FIFO для каждой реализации. Например, `PriorityQueue` выдаёт элементы согласно priority/order, а не просто порядку вставки.
+
+#### `Deque`
+
+`Deque<E>` — double-ended queue: операции доступны с обоих концов.
+
+```java
+Deque<String> deque =
+        new ArrayDeque<>();
+
+deque.addFirst("B");
+deque.addFirst("A");
+deque.addLast("C");
+```
+
+Получаем логическую последовательность:
+
+```text
+A B C
+```
+
+`ArrayDeque` часто используется и как queue, и как stack:
+
+```java
+deque.push("A");
+String value = deque.pop();
+```
+
+Для нового кода обычно предпочитают `Deque` legacy-классу `Stack`.
+
+#### `Map`
+
+`Map<K,V>` хранит пары key → value.
+
+```java
+Map<Long, String> users =
+        new HashMap<>();
+
+users.put(1L, "Alice");
+users.put(2L, "Bob");
+
+String name = users.get(1L);
+```
+
+Key в обычной Map уникален: повторный `put` для того же key обычно заменяет связанное value согласно контракту операции.
+
+Типичные реализации:
+
+```text
+HashMap       → hash-based map
+LinkedHashMap → encounter order
+TreeMap       → sorted/navigable keys
+```
+
+Исходный конспект активно использует generic maps и отдельно разбирает `ConcurrentHashMap` в многопоточности. fileciteturn69file0 Concurrent collections подробно рассмотрим вместе с concurrency, чтобы не смешивать базовый контракт с synchronization.
+
+#### Interface выбираем по требуемому поведению
+
+Плохой подход:
+
+> «Всегда использую HashMap/ArrayList, потому что они быстрее».
+
+Сначала определяем семантику:
+
+```text
+Нужны индексы и порядок?              → List
+Нужна уникальность элементов?         → Set
+Нужно key → value?                    → Map
+Нужна очередь обработки?              → Queue
+Нужны оба конца / stack semantics?     → Deque
+Нужна сортировка?                      → Sorted/Navigable variant
+Нужна concurrent access semantics?     → concurrent implementation
+```
+
+После этого выбираем implementation по complexity, ordering, null-policy, memory cost и concurrency requirements.
+
+#### Interface в объявлении, implementation при создании
+
+Обычно пишут:
+
+```java
+List<String> users =
+        new ArrayList<>();
+```
+
+а не:
+
+```java
+ArrayList<String> users =
+        new ArrayList<>();
+```
+
+если клиентскому коду не нужны специфические методы `ArrayList`.
+
+Это уменьшает зависимость от конкретной implementation:
+
+```java
+List<String> users =
+        new LinkedList<>();
+```
+
+можно заменить без изменения кода, использующего только контракт `List` — хотя performance characteristics при этом могут существенно измениться.
+
+#### `Collection` vs `Collections`
+
+Частая ловушка:
+
+```text
+Collection  → interface
+Collections → utility class
+```
+
+Например:
+
+```java
+Collections.sort(list);
+Collections.reverse(list);
+Collections.unmodifiableList(list);
+```
+
+Не путать также с названием всего **Collections Framework**.
+
+#### Базовые операции `Collection`
+
+```java
+collection.add(value);
+collection.remove(value);
+collection.contains(value);
+collection.size();
+collection.isEmpty();
+collection.clear();
+```
+
+Но наличие метода в interface не гарантирует, что каждая implementation поддерживает изменение.
+
+Например:
+
+```java
+List<String> values =
+        List.of("A", "B");
+
+// values.add("C"); // UnsupportedOperationException
+```
+
+Поэтому «это `List`» не означает «это mutable list».
+
+#### Optional operations
+
+Некоторые modifying operations Collections Framework являются optional: implementation может не поддерживать их и выбросить `UnsupportedOperationException`.
+
+Это runtime-свойство конкретной коллекции, а не отдельный compile-time тип `MutableList`.
+
+#### Null-policy зависит от implementation
+
+Нельзя запоминать правило:
+
+> «Java collections разрешают null».
+
+У разных implementations контракты различаются.
+
+Например, одни collections допускают `null`, другие запрещают. Поэтому null-policy нужно проверять у конкретной implementation/API.
+
+#### Порядок тоже зависит от контракта
+
+`List` сохраняет позиционную последовательность.
+
+Для sets/maps нельзя автоматически считать iteration order равным insertion order:
+
+```text
+HashSet / HashMap             → не обещают insertion order
+LinkedHashSet / LinkedHashMap → encounter order
+TreeSet / TreeMap             → sorted order
+```
+
+Выбор реализации должен отражать требуемый контракт, а не случайный порядок, который наблюдался в одном запуске.
+
+#### Generics и collections
+
+Collections почти всегда используют generics:
+
+```java
+List<User>
+Set<Long>
+Map<Long, User>
+```
+
+Это даёт compile-time type safety:
+
+```java
+List<String> names =
+        new ArrayList<>();
+
+// names.add(10); // compile error
+```
+
+Wildcards и PECS из Java Core особенно важны при проектировании методов, работающих с collections:
+
+```java
+static void print(
+        Collection<?> values
+) {
+    values.forEach(System.out::println);
+}
+```
+
+#### Типичные ошибки
+
+**«Map extends Collection».**  
+Нет. Map входит в framework, но имеет отдельную hierarchy.
+
+**«Set просто удаляет одинаковые элементы».**  
+Точнее: Set не допускает duplicates согласно equality semantics implementation; для hash-based set критичен корректный `equals/hashCode`.
+
+**«Queue всегда FIFO».**  
+Нет. Это зависит от implementation; `PriorityQueue` — очевидный контрпример.
+
+**«List всегда mutable».**  
+Нет. Interface не гарантирует поддержку всех modifying operations.
+
+**«HashMap сохраняет порядок вставки».**  
+Такого контракта у HashMap нет. Если нужен encounter/insertion order, выбирают соответствующую implementation, например LinkedHashMap.
+
+#### Что важно запомнить
+
+- `Collection` — корневой interface основной collection hierarchy; `Map` стоит отдельно.
+- `List` — последовательность с индексами и duplicates.
+- `Set` — множество без duplicates.
+- `Queue` — модель очереди обработки; не каждая Queue обязана быть FIFO.
+- `Deque` работает с обоими концами и подходит для stack/queue scenarios.
+- `Map` хранит key-value associations.
+- Выбираем сначала **контракт**, потом implementation.
+- Mutability, null-policy, ordering и complexity зависят от конкретной implementation/factory.
+- `Collection` и utility class `Collections` — разные вещи.
+
+#### На собеседовании
+
+**Какая иерархия у Collections Framework?**
+
+> Iterable находится выше Collection. От Collection идут List, Set и Queue, а Deque расширяет Queue. Map входит в Collections Framework, но не наследует Collection, потому что моделирует пары key-value, а не отдельные элементы.
+
+**Чем List, Set и Map отличаются по смыслу?**
+
+> List нужен для упорядоченной последовательности и допускает duplicates. Set представляет уникальные элементы. Map хранит соответствие уникального key к value. Конкретная реализация дополнительно определяет ordering, complexity, null-policy и другие свойства.
+
+**Чем Collection отличается от Collections?**
+
+> Collection — interface для группы элементов. Collections — utility class со static methods для работы с collections, например sort, reverse и unmodifiable wrappers.
+
+#### Источники и уточнения
+
+- В найденном исходнике нет цельного вводного раздела с hierarchy Collections Framework; зато он использует `Map` и отдельно разбирает concurrent map implementations. fileciteturn69file0
+- Поэтому базовая hierarchy и контракты здесь дополнены по Java API.
+- [Java API — Collection](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Collection.html)
+- [Java API — List](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/List.html)
+- [Java API — Set](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Set.html)
+- [Java API — Queue](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Queue.html)
+- [Java API — Map](https://docs.oracle.com/en/java/javase/26/docs/api/java.base/java/util/Map.html)
+
+**Далее:** 2.2. ArrayList — внутренний массив, capacity vs size, рост, сложности операций, вставка/удаление, `ensureCapacity`, `subList` и типичные вопросы собеседования.
