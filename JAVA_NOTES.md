@@ -7244,3 +7244,232 @@ public
 - [Java Language Specification — Packages](https://docs.oracle.com/javase/specs/jls/se26/html/jls-7.html) — packages, imports и top-level declarations.
 
 **Далее:** 1.16. Object lifecycle и initialization order — default values, field initializers, static/instance initialization blocks, constructors, порядок superclass → subclass и вызов overridable methods из constructor.
+
+---
+
+### 1.16. Создание объекта и порядок инициализации
+
+При `new Child()` объект не возникает сразу в полностью готовом состоянии. Java последовательно выделяет память, задаёт полям default values и выполняет инициализацию классов/экземпляра и constructors.
+
+Важно различать **class initialization** и **object initialization**.
+
+#### Default values полей
+
+Instance/static fields получают default values:
+
+```text
+int/long/... → 0
+boolean      → false
+char         → '\u0000'
+reference    → null
+```
+
+Это не относится к local variables: их компилятор требует явно инициализировать перед чтением.
+
+#### Static initialization
+
+При первой активной инициализации класса выполняются static field initializers и `static {}` blocks в текстовом порядке:
+
+```java
+class Config {
+    static int a = print("a");
+    static { print("block"); }
+    static int b = print("b");
+}
+```
+
+Концептуальный порядок: `a → static block → b`.
+
+Superclass инициализируется до subclass. Class initialization выполняется JVM один раз для данного класса в контексте его defining class loader, а не при каждом `new`.
+
+#### Instance initialization
+
+```java
+class User {
+    private String name = "unknown";
+
+    {
+        System.out.println("instance block");
+    }
+
+    User() {
+        System.out.println("constructor");
+    }
+}
+```
+
+Field initializers и instance initializer blocks выполняются в текстовом порядке как часть инициализации каждого нового объекта, до оставшейся части тела соответствующего constructor.
+
+#### Наследование: superclass сначала
+
+```java
+class Parent {
+    int p = log("Parent field");
+    Parent() { log("Parent constructor"); }
+}
+
+class Child extends Parent {
+    int c = log("Child field");
+    Child() { log("Child constructor"); }
+}
+```
+
+Для `new Child()` упрощённый порядок:
+
+```text
+1. память объекта + default values
+2. initialization superclass
+   ├── Parent fields / instance blocks
+   └── Parent constructor
+3. Child fields / instance blocks
+4. Child constructor
+```
+
+Перед выполнением subclass constructor обязательно идёт constructor superclass — явно через `super(...)` или неявно через `super()`, если это допустимо.
+
+#### `this(...)` и `super(...)`
+
+Constructor может делегировать другому constructor того же class:
+
+```java
+User() {
+    this("unknown");
+}
+
+User(String name) {
+    this.name = name;
+}
+```
+
+или constructor superclass:
+
+```java
+Child() {
+    super();
+}
+```
+
+Constructor invocation должна подчиняться специальным правилам языка; цепочка в итоге приводит к инициализации superclass прежде, чем завершится initialization subclass.
+
+#### Главная ловушка: overridable method из constructor
+
+```java
+class Parent {
+    Parent() {
+        print();
+    }
+
+    void print() {
+        System.out.println("parent");
+    }
+}
+
+class Child extends Parent {
+    private String value = "ready";
+
+    @Override
+    void print() {
+        System.out.println(value);
+    }
+}
+```
+
+При:
+
+```java
+new Child();
+```
+
+вызов `print()` из `Parent` динамически dispatch-ится в `Child.print()`, **но Child field initializer ещё не выполнился**. Поэтому `value` в этот момент всё ещё имеет default value `null`.
+
+Это причина важного правила:
+
+> Не вызывайте overridable instance methods из constructor, если результат зависит от полностью инициализированного subclass state.
+
+Иначе subclass наблюдает частично сконструированный объект.
+
+#### Утечка `this` из constructor
+
+Похожая проблема возникает, если constructor публикует `this` наружу:
+
+```java
+class Listener {
+    Listener(EventBus bus) {
+        bus.register(this);
+    }
+}
+```
+
+Другой код потенциально может получить объект до завершения construction. В многопоточном коде это особенно опасно и связано с safe publication/JMM.
+
+Исходный конспект отдельно подчёркивает специальные гарантии корректно инициализированных `final` fields после завершения constructor. fileciteturn65file1 Детально safe publication будет разобрана в главе JMM.
+
+#### Constructor не является обычным method
+
+Constructor:
+
+- не имеет return type;
+- не наследуется;
+- не override-ится;
+- вызывается как часть создания/цепочки initialization;
+- может быть overloaded.
+
+```java
+User() {}
+User(String name) {}
+User(String name, int age) {}
+```
+
+Это constructor overloading, а не overriding.
+
+#### Типичные ошибки
+
+**«Поля сначала получают значения из initializer».**  
+До этого память содержит language-defined default values.
+
+**«Static block выполняется при каждом создании объекта».**  
+Нет. Он относится к initialization класса.
+
+**«Constructor superclass вызывается после constructor subclass».**  
+Нет. Superclass construction предшествует завершению subclass initialization.
+
+**«Вызов virtual method из constructor безопасен, потому что объект уже создан».**  
+Объект выделен, но subclass state может быть ещё не инициализирован.
+
+**«Local variables получают те же default values, что fields».**  
+Нет. Local variable должна быть definitely assigned до чтения.
+
+#### Что важно запомнить
+
+- Fields сначала получают default values.
+- Static initialization относится к классу; instance initialization — к каждому объекту.
+- Static fields/blocks и instance fields/blocks выполняются в соответствующем текстовом порядке.
+- Superclass инициализируется раньше subclass.
+- Constructor не наследуется и не override-ится.
+- Overridable method из constructor может увидеть частично инициализированный subclass.
+- Не следует публиковать `this` до завершения construction.
+- Гарантии `final` fields в JMM требуют корректного construction без преждевременной утечки объекта.
+
+#### На собеседовании
+
+**Каков порядок создания `Child extends Parent`?**
+
+> Сначала объект получает память и default values полей. Затем выполняется initialization superclass: его instance initializers и constructor. После этого выполняются field/instance initializers Child и тело constructor Child. Static initialization классов — отдельный процесс и выполняется при initialization соответствующего класса.
+
+**Почему плохо вызывать overridable method из constructor?**
+
+> Dynamic dispatch может вызвать override subclass до того, как поля subclass получили значения из initializers/constructor. Метод увидит частично инициализированное состояние, например null вместо ожидаемого значения.
+
+**Есть ли default values у local variables?**
+
+> Нет в смысле доступного программисту автоматического значения: компилятор требует definitely assigned local variable перед чтением. Default values автоматически задаются fields и array elements.
+
+#### Источники и уточнения
+
+- В найденном исходнике отдельного Java Core-раздела о порядке object initialization нет; Spring lifecycle не следует смешивать с language-level construction.
+- Исходник подтверждает важный соседний JMM-нюанс: корректная инициализация `final` fields связана с safe publication. fileciteturn65file1
+- [JLS — Initialization of Classes and Interfaces](https://docs.oracle.com/javase/specs/jls/se26/html/jls-12.html#jls-12.4) — class initialization.
+- [JLS — Creation of New Class Instances](https://docs.oracle.com/javase/specs/jls/se26/html/jls-12.html#jls-12.5) — порядок object initialization.
+- [JLS — Constructor Body](https://docs.oracle.com/javase/specs/jls/se26/html/jls-8.html#jls-8.8.7) — constructor invocation и initialization.
+
+**Далее:** 2.1. Collections Framework — иерархия `Collection`, отличие `List`, `Set`, `Queue`, место `Map`, базовые контракты и выбор структуры данных.
